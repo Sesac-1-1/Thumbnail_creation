@@ -14,16 +14,16 @@ from services import resource_service as rs
 from services.thumbnail_service import create_thumbnail, save_thumbnail
 
 
-def _write_test_video(job: Path) -> Path:
+def _write_test_video(job: Path, size: tuple[int, int] = (64, 48)) -> Path:
     """Try MJPEG/AVI then mp4v/MP4; skip only if neither writer opens."""
     for codec, extension in (('MJPG', 'avi'), ('mp4v', 'mp4')):
         video = job / f'tiny.{extension}'
-        writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*codec), 5.0, (64, 48))
+        writer = cv2.VideoWriter(str(video), cv2.VideoWriter_fourcc(*codec), 5.0, size)
         try:
             if not writer.isOpened():
                 continue
             for _ in range(3):
-                writer.write(np.full((48, 64, 3), [10, 20, 240], dtype=np.uint8))
+                writer.write(np.full((size[1], size[0], 3), [10, 20, 240], dtype=np.uint8))
             return video
         finally:
             writer.release()
@@ -76,10 +76,10 @@ class OpenCVIntegrationTests(unittest.TestCase):
                 with patch.object(vs.cv2, 'VideoCapture', wraps=cv2.VideoCapture) as capture:
                     info = vs.get_video_info(video)
                     self.assertEqual(info['frame_count'], 3)
-                    before = rs.get_system_resource()
+                    measurement = rs.start_measurement()
+                    before = measurement['resources']
                     requested_sample_count = rs.choose_sample_count(
                         before['cpu_percent'], before['memory_percent'])
-                    measurement = rs.start_measurement()
                     frames = vs.extract_frames(video, requested_sample_count, video_info=info)
                     self.assertEqual(capture.call_count, 2)
                 self.assertEqual(len(frames), 3)

@@ -1,22 +1,17 @@
 """Transform extracted uint8 BGR frames; no video or resource dependencies.
 
-Streamlit integration (guidance only; no Streamlit dependency here):
-- Session keys: job_id, video_metadata, candidate_frames, selected_frame,
-  requested_sample_count, actual_sample_count, processing_result,
-  resource_metrics, saved_thumbnail_path. Use actual_sample_count=len(frames).
-- On a new upload, call create_temp_job_dir() once and store its name as
-  session_state["job_id"]. Keep metadata/frames/metrics in the same session.
-- Generate and save only when session_state["processing_result"] is absent.
-  Store the returned Path there; reuse it on UI reruns.
-- After video processing is finished, cleanup_temp_files(job_dir) removes only
-  that job's uploads. The saved thumbnail remains available for downloads.
-- Optional startup cleanup_stale_thumbnails(retention_seconds) removes expired
-  generated files. Choose a retention longer than the download window; on rerun
-  check saved_thumbnail_path.exists() and handle expired results explicitly.
-- When the user discards/replaces a result, call delete_thumbnail(saved_path)
-  and clear the old session state. Do not delete outputs on every rerun.
+The app streams candidate frames through create_preview(), storing only small
+JPEG bytes plus index/timestamp metadata. No full-resolution candidates persist
+in session state. On selection it re-reads one frame, calls create_thumbnail()
+and save_thumbnail(), and reuses that saved Path on unchanged UI reruns.
+
+Keep the job upload until it is replaced/removed so selection can re-read it.
+The workflow then deletes the selected output and cleans only that job. Optional
+stale-output cleanup uses a retention window longer than expected downloads;
+an expired selected result can be regenerated from the retained upload.
 """
 from pathlib import Path
+from io import BytesIO
 
 import numpy as np
 from PIL import Image, ImageOps
@@ -99,3 +94,10 @@ def save_thumbnail(
     with file_manager.open_thumbnail_file(path) as stream:
         thumbnail.save(stream, format=image_format, **options)
     return path
+
+
+def create_preview(frame: np.ndarray) -> bytes:
+    """Return one 320x180 JPEG preview; no input array/image is retained."""
+    with create_thumbnail(frame) as thumbnail, BytesIO() as buffer:
+        thumbnail.save(buffer, format='JPEG', quality=75, optimize=True)
+        return buffer.getvalue()

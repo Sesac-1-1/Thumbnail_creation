@@ -16,3 +16,4 @@ dependencies = [
 
 [tool.setuptools]
 packages = ["services"]
+py-modules = ["workflow", "app"]

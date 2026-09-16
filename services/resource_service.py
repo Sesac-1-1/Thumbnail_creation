@@ -4,8 +4,8 @@ Memory fields ending in _mb use 1024**2 bytes (MiB). CPU snapshots sample the
 whole system over 0.1 seconds; they are not process CPU or whole-job averages.
 RSS deltas describe this Python process, not a single Streamlit session: other
 sessions/threads and allocator caching can influence them. They are not peaks.
-Store start_measurement() in session_state only for the current running job;
-store the finished report for reruns instead of measuring the same job again.
+Keep start_measurement() local to synchronous processing; store only the
+finished report for reruns. Never keep a timer across user interaction.
 """
 from collections.abc import Mapping
 import math
@@ -16,6 +16,7 @@ from typing import Any
 import psutil
 
 _BYTES_PER_MB = 1024 * 1024
+FALLBACK_SAMPLE_COUNT = 5
 
 
 class ResourceServiceError(RuntimeError):
@@ -75,13 +76,14 @@ def finish_measurement(
     requested_sample_count: int | None = None,
     actual_sample_count: int | None = None,
     total_frames: int | None = None,
-) -> dict[str, float | int]:
+) -> dict[str, float | int | None]:
     """Finish timing before the final resource snapshot and return a report.
 
     Both 0.1-second snapshot sampling intervals are excluded from elapsed time.
     Supply all three optional counts together to include sampling statistics.
     actual_sample_count must be len(extracted_frames), never the requested count.
-    sampling_ratio is actual/total in [0,1]; frames_processed is the actual count.
+    sampling_ratio is actual/total in [0,1], or None if total_frames is unknown
+    (zero); frames_processed is the actual count.
     Omit counts for a generic resource-only measurement.
     """
     if not isinstance(start, Mapping) or not {'started_at', 'resources'} <= start.keys():
@@ -99,10 +101,11 @@ def finish_measurement(
     counts = (requested_sample_count, actual_sample_count, total_frames)
     if any(value is not None for value in counts):
         if (any(type(value) is not int for value in counts)
-                or requested_sample_count < 1 or total_frames < 1
-                or not 0 <= actual_sample_count <= min(requested_sample_count, total_frames)):
-            raise ValueError("Provide integer counts: requested >= 1, total >= 1, "
-                             "0 <= actual <= min(requested, total)")
+                or requested_sample_count < 1 or total_frames < 0
+                or not 0 <= actual_sample_count <= requested_sample_count
+                or (total_frames > 0 and actual_sample_count > total_frames)):
+            raise ValueError("Provide integer counts: requested >= 1, total >= 0, "
+                             "0 <= actual <= requested and <= total when known")
     elapsed = time.perf_counter() - started_at
     if elapsed < 0:
         raise ValueError("start.started_at is later than the current performance counter")
@@ -125,5 +128,5 @@ def finish_measurement(
         report.update(requested_sample_count=requested_sample_count,
                       actual_sample_count=actual_sample_count,
                       total_frames=total_frames, frames_processed=actual_sample_count,
-                      sampling_ratio=actual_sample_count / total_frames)
+                      sampling_ratio=actual_sample_count / total_frames if total_frames else None)
     return report

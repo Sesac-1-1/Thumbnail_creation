@@ -153,14 +153,71 @@ class VideoServiceTests(unittest.TestCase):
                 vs.extract_frames(self.video_path, video_info=info)
         capture = FakeCapture()
         with patch.object(vs.cv2, 'VideoCapture', return_value=capture):
-            with self.assertRaisesRegex(vs.VideoServiceError, 'no readable frames'):
-                vs.extract_frames(self.video_path, video_info={'frame_count': 0, 'fps': 30})
+            frames = vs.extract_frames(self.video_path, 3, video_info={
+                'frame_count': 0, 'fps': 30, 'video_id': vs.get_video_id(self.video_path)})
+            self.assertEqual(len(frames), 3)
+            self.assertEqual([item['index'] for item in frames], [0, 1, 2])
         self.assertTrue(capture.released)
         capture = FakeCapture()
         with patch.object(capture, 'get', return_value=float('nan')):
             with patch.object(vs.cv2, 'VideoCapture', return_value=capture):
                 with self.assertRaisesRegex(vs.VideoServiceError, 'metadata'):
                     vs.get_video_info(self.video_path)
+        self.assertTrue(capture.released)
+
+    def test_stale_metadata_rejected(self):
+        with patch.object(vs.cv2, 'VideoCapture', FakeCapture):
+            info = vs.get_video_info(self.video_path)
+            other = self.video_path.with_name('other.mp4')
+            other.write_bytes(self.video_path.read_bytes())
+            with self.assertRaisesRegex(ValueError, 'different or changed'):
+                vs.extract_frames(other, video_info=info)
+            self.video_path.write_bytes(b'new upload')
+            with self.assertRaises(ValueError):
+                vs.extract_frame_at_index(self.video_path, 0, info)
+
+    def test_selected_frame_and_release(self):
+        for index in (-1, True, 1.5, '1'):
+            with self.assertRaises(ValueError):
+                vs.extract_frame_at_index(self.video_path, index)
+        capture = FakeCapture()
+        with patch.object(vs.cv2, 'VideoCapture', return_value=capture) as factory:
+            frame = vs.extract_frame_at_index(self.video_path, 33)
+            self.assertEqual(frame[0, 0, 0], 33)
+            factory.assert_called_once()
+        self.assertTrue(capture.released)
+        for index in (100, 101):
+            with patch.object(vs.cv2, 'VideoCapture', FakeCapture):
+                with self.assertRaises(ValueError):
+                    vs.extract_frame_at_index(self.video_path, index)
+        capture = FakeCapture()
+        with patch.object(vs.cv2, 'VideoCapture', return_value=capture):
+            with patch.object(capture, 'read', return_value=(False, None)):
+                with self.assertRaises(vs.VideoServiceError):
+                    vs.extract_frame_at_index(self.video_path, 0)
+        self.assertTrue(capture.released)
+
+    def test_backend_unknown_negative_count_normalized(self):
+        capture = FakeCapture()
+        original_get = capture.get
+        with patch.object(capture, 'get', side_effect=lambda prop: -1 if prop == vs.cv2.CAP_PROP_FRAME_COUNT else original_get(prop)):
+            with patch.object(vs.cv2, 'VideoCapture', return_value=capture):
+                info = vs.get_video_info(self.video_path)
+                self.assertEqual(info['frame_count'], 0)
+                self.assertEqual(len(vs.extract_frames(self.video_path, 3, info)), 3)
+
+    def test_unknown_count_bounded_and_iterator_close(self):
+        info = dict(frame_count=0, fps=30, video_id=vs.get_video_id(self.video_path))
+        capture = FakeCapture()
+        with patch.object(vs.cv2, 'VideoCapture', return_value=capture):
+            with patch.object(capture, 'read', wraps=capture.read) as read:
+                frames = vs.extract_frames(self.video_path, 1000, info)
+                self.assertEqual(len(frames), vs.MAX_UNKNOWN_FRAMES)
+                self.assertEqual(read.call_count, vs.MAX_UNKNOWN_FRAMES)
+        with patch.object(vs.cv2, 'VideoCapture', return_value=capture):
+            generator = vs.iter_frames(self.video_path, 5)
+            next(generator)
+            generator.close()
         self.assertTrue(capture.released)
 
 
