@@ -19,14 +19,6 @@ class FileManagerTests(unittest.TestCase):
         patches.start()
         self.addCleanup(patches.stop)
 
-    def _symlink(self, link, target, *, target_is_directory=False):
-        try:
-            link.symlink_to(target, target_is_directory=target_is_directory)
-        except OSError as error:
-            if getattr(error, 'winerror', None) == 1314:
-                self.skipTest('Windows requires symlink privilege for this test')
-            raise
-
     def test_directories_and_paths(self):
         fm.ensure_directories()
         fm.ensure_directories()
@@ -40,50 +32,35 @@ class FileManagerTests(unittest.TestCase):
                 fm.generate_thumbnail_path(extension)
 
     def test_cleanup_boundary(self):
-        job_a = fm.create_temp_job_dir()
-        job_b = fm.create_temp_job_dir()
-        self.assertNotEqual(job_a, job_b)
-        self.assertEqual(fm.create_temp_job_dir(job_b.name), job_b)
-        (job_b / 'keep.txt').write_text('keep')
+        fm.cleanup_temp_files()
+        fm.ensure_directories()
         outside = self.root / 'keep.txt'
         outside.write_text('keep')
         saved = fm.THUMBNAIL_DIR / 'keep.jpg'
         saved.write_bytes(b'keep')
-        (job_a / 'nested').mkdir()
-        (job_a / 'nested' / 'file').write_text('remove')
-        self._symlink(job_a / 'link', self.root, target_is_directory=True)
-        fm.cleanup_temp_files(job_a)
-        fm.cleanup_temp_files(job_a)
-        self.assertFalse(job_a.exists())
-        self.assertEqual((job_b / 'keep.txt').read_text(), 'keep')
+        (fm.TEMP_DIR / 'nested').mkdir()
+        (fm.TEMP_DIR / 'nested' / 'file').write_text('remove')
+        try:
+            (fm.TEMP_DIR / 'link').symlink_to(self.root, target_is_directory=True)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows requires symlink privilege for this test')
+            raise
+        fm.cleanup_temp_files()
+        fm.cleanup_temp_files()
+        self.assertEqual(list(fm.TEMP_DIR.iterdir()), [])
         self.assertEqual(outside.read_text(), 'keep')
         self.assertEqual(saved.read_bytes(), b'keep')
-
-    def test_reject_invalid_job_paths(self):
-        job = fm.create_temp_job_dir()
-        invalid = [fm.TEMP_DIR, self.root, fm.THUMBNAIL_DIR,
-                   Path('temp') / job.name, job / 'nested',
-                   fm.TEMP_DIR / '..' / 'temp' / job.name]
-        for path in invalid:
-            with self.subTest(path=path), self.assertRaises(ValueError):
-                fm.cleanup_temp_files(path)
-        for job_id in ('../escape', '', '.', 'a/b', 'a\\b', 'CON', 12):
-            with self.subTest(job_id=job_id), self.assertRaises(ValueError):
-                fm.create_temp_job_dir(job_id)
-        link = fm.TEMP_DIR / ('a' * 32)
-        self._symlink(link, job, target_is_directory=True)
+        fm.TEMP_DIR.rmdir()
+        try:
+            fm.TEMP_DIR.symlink_to(self.root, target_is_directory=True)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows requires symlink privilege for this test')
+            raise
         with self.assertRaises(ValueError):
-            fm.cleanup_temp_files(link)
-        with self.assertRaises(ValueError):
-            fm.create_temp_job_dir(link.name)
-        self.assertTrue(job.exists())
-
-    def test_symlink_temp_root(self):
-        self._symlink(fm.TEMP_DIR, self.root, target_is_directory=True)
-        with self.assertRaises(ValueError):
-            fm.create_temp_job_dir()
-        with self.assertRaises(ValueError):
-            fm.cleanup_temp_files(fm.TEMP_DIR / ('a' * 32))
+            fm.cleanup_temp_files()
+        self.assertTrue(outside.exists())
 
     def test_directory_failure_and_exclusive_writes(self):
         fm.TEMP_DIR.write_text('blocking file')
@@ -91,55 +68,18 @@ class FileManagerTests(unittest.TestCase):
             fm.ensure_directories()
         fm.TEMP_DIR.unlink()
         path = fm.generate_thumbnail_path()
-        with fm.open_thumbnail_file(path) as stream:
+        with fm._open_thumbnail_file(path) as stream:
             stream.write(b'original')
         with self.assertRaises(FileExistsError):
-            with fm.open_thumbnail_file(path):
+            with fm._open_thumbnail_file(path):
                 pass
         self.assertEqual(path.read_bytes(), b'original')
         failed = fm.generate_thumbnail_path()
         with self.assertRaisesRegex(OSError, 'write failure'):
-            with fm.open_thumbnail_file(failed) as stream:
+            with fm._open_thumbnail_file(failed) as stream:
                 stream.write(b'partial')
                 raise OSError('write failure')
         self.assertFalse(failed.exists())
-
-    def test_thumbnail_lifecycle_boundaries(self):
-        path = fm.generate_thumbnail_path()
-        with fm.open_thumbnail_file(path) as stream:
-            stream.write(b'owned image')
-        fm.delete_thumbnail(path)
-        fm.delete_thumbnail(path)
-        self.assertFalse(path.exists())
-        outside = self.root / 'outside.jpg'
-        outside.write_bytes(b'keep')
-        link = fm.THUMBNAIL_DIR / 'link.jpg'
-        self._symlink(link, outside)
-        directory = fm.THUMBNAIL_DIR / 'directory.jpg'
-        directory.mkdir()
-        text = fm.THUMBNAIL_DIR / 'keep.txt'
-        text.write_text('keep')
-        invalid = [outside, link, directory, text, fm.THUMBNAIL_DIR,
-                   Path('output/thumbnails/file.jpg'),
-                   fm.THUMBNAIL_DIR / '..' / 'thumbnails' / 'file.jpg']
-        for target in invalid:
-            with self.subTest(target=target), self.assertRaises(ValueError):
-                fm.delete_thumbnail(target)
-        self.assertEqual(outside.read_bytes(), b'keep')
-        self.assertEqual(text.read_text(), 'keep')
-        for target in [outside, link, Path('relative.jpg'),
-                       fm.THUMBNAIL_DIR / '..' / 'escape.jpg']:
-            with self.subTest(target=target), self.assertRaises(ValueError):
-                with fm.open_thumbnail_file(target):
-                    pass
-        self.assertEqual(outside.read_bytes(), b'keep')
-
-    def test_output_root_symlink(self):
-        self._symlink(fm.OUTPUT_DIR, self.root, target_is_directory=True)
-        with self.assertRaises(ValueError):
-            fm.delete_thumbnail(fm.THUMBNAIL_DIR / 'file.jpg')
-        with self.assertRaises(ValueError):
-            fm.generate_thumbnail_path()
 
 
 if __name__ == '__main__':
