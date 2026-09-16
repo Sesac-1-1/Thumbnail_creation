@@ -1,0 +1,4 @@
+[server]
+# 업로드 파일은 Streamlit이 메모리에 들고 있고, 앱은 그것을 디스크로 흘려 써서 두 번째 복사를 만들지 않는다.
+# 16GB 개발 환경에서 Big Buck Bunny 1080p(735MB) 같은 테스트 영상을 다루기 위해 1GB로 둔다.
+maxUploadSize = 1024

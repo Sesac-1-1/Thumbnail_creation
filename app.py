@@ -8,7 +8,8 @@ services/ 아래 모듈은 Streamlit을 모른다. 이 파일은 그 모듈들�
 """
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+import shutil
+from typing import Any, BinaryIO
 from uuid import uuid4
 import zipfile
 
@@ -44,24 +45,25 @@ TIMELINE_LABELS = {
 # 처리 파이프라인 (Streamlit 의존 없음)
 # ----------------------------------------------------------------------------
 
-def save_upload(data: bytes, filename: str) -> Path:
-    """업로드 바이트를 TEMP_DIR에 고유한 이름으로 저장하고 경로를 돌려준다."""
-    if not data:
-        raise ValueError("업로드된 영상이 비어 있습니다")
+def save_upload(upload: BinaryIO, filename: str) -> Path:
+    """업로드 스트림을 TEMP_DIR에 흘려 써서 저장하고 경로를 돌려준다.
+
+    getvalue()로 바이트를 통째로 꺼내지 않으므로 메모리에 두 번째 복사본이 생기지 않는다.
+    임시 파일의 수명은 호출자(세션)가 관리한다.
+    """
     file_manager.ensure_directories()
     suffix = Path(filename).suffix.lower() or ".mp4"
     path = file_manager.TEMP_DIR / f"upload_{uuid4().hex}{suffix}"
-    path.write_bytes(data)
-    return path
-
-
-def read_video_info(data: bytes, filename: str) -> dict[str, Any]:
-    """영상을 임시 저장해 메타데이터만 읽고 임시 파일을 정리한다."""
-    path = save_upload(data, filename)
+    upload.seek(0)
     try:
-        return get_video_info(path)
-    finally:
-        file_manager.cleanup_temp_files()
+        with path.open("xb") as target:
+            shutil.copyfileobj(upload, target, length=8 * 1024 * 1024)
+        if path.stat().st_size == 0:
+            raise ValueError("업로드된 영상이 비어 있습니다")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+    return path
 
 
 def decide_sample_count(info: dict[str, Any], manual_sample_count: int | None = None) -> dict[str, Any]:
@@ -90,19 +92,19 @@ def delete_thumbnails(thumbnails: list[dict[str, Any]]) -> None:
 
 
 def run_pipeline(
-    data: bytes,
-    filename: str,
+    video_path: Path,
     *,
     size: tuple[int, int] = (320, 180),
     crop: bool = False,
     image_format: str = "JPEG",
     manual_sample_count: int | None = None,
 ) -> dict[str, Any]:
-    """업로드 → 메타데이터 → 샘플 수 결정 → [측정] 프레임 추출 + 썸네일 저장 → 임시 파일 정리.
+    """저장된 영상 → 메타데이터 → 샘플 수 결정 → [측정] 프레임 추출 + 썸네일 저장.
 
     측정 구간(measure)은 프레임 추출과 썸네일 생성·저장을 모두 포함한다.
+    영상 파일은 지우지 않는다. 같은 영상으로 옵션만 바꿔 다시 생성할 수 있어야 하기 때문이다.
     """
-    video_path = save_upload(data, filename)
+    video_path = Path(video_path)
     thumbnails: list[dict[str, Any]] = []
     try:
         info = get_video_info(video_path)
@@ -119,10 +121,8 @@ def run_pipeline(
     except BaseException:
         delete_thumbnails(thumbnails)  # 중간에 실패하면 반쪽 결과를 남기지 않는다
         raise
-    finally:
-        file_manager.cleanup_temp_files()
     return {
-        "filename": filename,
+        "filename": info["filename"],
         "info": info,
         **decision,
         "report": report,
@@ -148,6 +148,13 @@ def zip_thumbnails(thumbnails: list[dict[str, Any]]) -> bytes:
 
 def _upload_key(upload: Any) -> str:
     return getattr(upload, "file_id", None) or f"{upload.name}:{upload.size}"
+
+
+def _discard_result(state: Any) -> None:
+    """이전 결과의 썸네일 파일을 지우고 세션에서 결과를 뺀다."""
+    if state.get("result"):
+        delete_thumbnails(state["result"]["thumbnails"])
+    state.pop("result", None)
 
 
 def render_video_info(info: dict[str, Any]) -> None:
@@ -247,21 +254,27 @@ def main() -> None:
                    "해상도와 가용 메모리에 따라 상한이 더 낮아질 수 있습니다.")
     options = {"size": size, "crop": crop, "image_format": image_format, "manual_sample_count": manual}
 
-    upload = st.file_uploader("영상 업로드", type=VIDEO_EXTENSIONS)
     state = st.session_state
+    if not state.get("session_ready"):
+        file_manager.cleanup_temp_files()  # 이전 실행이 남긴 임시 영상 정리
+        state["session_ready"] = True
+
+    upload = st.file_uploader("영상 업로드", type=VIDEO_EXTENSIONS)
     if upload is None:
         st.info("영상 파일(mp4, mov, avi, mkv, webm)을 업로드하세요.")
         return
 
     key = _upload_key(upload)
     if state.get("upload_key") != key:
-        if state.get("result"):
-            delete_thumbnails(state["result"]["thumbnails"])
-        state.pop("result", None)
+        _discard_result(state)
         state.pop("info", None)
+        state.pop("video_path", None)
+        file_manager.cleanup_temp_files()
         state["upload_key"] = key
         try:
-            state["info"] = read_video_info(upload.getvalue(), upload.name)
+            with st.spinner("영상을 임시 저장하고 정보를 읽는 중..."):
+                state["video_path"] = save_upload(upload, upload.name)
+                state["info"] = get_video_info(state["video_path"])
         except (VideoServiceError, OSError, ValueError) as error:
             state["info_error"] = str(error)
         else:
@@ -274,18 +287,16 @@ def main() -> None:
     left, right = st.columns([1, 5])
     run = left.button("썸네일 생성", type="primary")
     clear = right.button("결과 지우기")
-    if clear and state.get("result"):
-        delete_thumbnails(state["result"]["thumbnails"])
-        state.pop("result", None)
+    if clear:
+        _discard_result(state)
     if run:
         try:
             with st.spinner("프레임을 추출하고 썸네일을 만드는 중..."):
-                result = run_pipeline(upload.getvalue(), upload.name, **options)
+                result = run_pipeline(state["video_path"], **options)
         except (VideoServiceError, OSError, ValueError) as error:
             st.error(f"처리에 실패했습니다: {error}")
             return
-        if state.get("result"):
-            delete_thumbnails(state["result"]["thumbnails"])
+        _discard_result(state)
         state["result"] = result
 
     result = state.get("result")
