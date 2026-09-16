@@ -48,7 +48,8 @@ def _percent(value: float) -> float:
     return round(min(100.0, max(0.0, float(value))), 2)
 
 
-def _cpu_count() -> int:
+def cpu_count() -> int:
+    """process_cpu_percent 정규화에 쓰는 논리 코어 수. 코어 기준 %로 되돌릴 때 같은 값을 쓴다."""
     return psutil.cpu_count() or os.cpu_count() or 1
 
 
@@ -103,7 +104,7 @@ def _read_cpu_window(process: psutil.Process) -> tuple[float, float]:
             break
         time.sleep(CPU_SAMPLE_INTERVAL)
         cpu = psutil.cpu_percent(None)
-    return cpu, process.cpu_percent(None) / _cpu_count()
+    return cpu, process.cpu_percent(None) / cpu_count()
 
 
 def _snapshot(process: psutil.Process, blocking: bool) -> dict[str, Any]:
@@ -116,7 +117,7 @@ def _snapshot(process: psutil.Process, blocking: bool) -> dict[str, Any]:
         cpu, process_cpu = _read_cpu_window(process)
     else:
         cpu = psutil.cpu_percent(None)
-        process_cpu = process.cpu_percent(None) / _cpu_count()
+        process_cpu = process.cpu_percent(None) / cpu_count()
     memory = psutil.virtual_memory()
     return {
         "cpu_percent": _percent(cpu),

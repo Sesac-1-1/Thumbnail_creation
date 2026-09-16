@@ -20,6 +20,35 @@ HISTORY_POINTS = 60  # 2초 간격 × 60점 = 최근 2분
 HISTORY_COLUMNS = ("cpu_percent", "memory_percent", "process_cpu_percent", "process_memory_mb")
 
 
+def core_percent(process_cpu_percent: float) -> float:
+    """전체 기준(코어 수로 나눈) 프로세스 CPU %를 코어 하나 기준 %로 되돌린다.
+
+    macOS 활성 상태 보기와 같은 기준이다. 스레드 하나가 코어를 꽉 채우면 100%,
+    OpenCV가 여러 스레드를 쓰면 100%를 넘는다. 전체 기준 값은 11코어 Mac에서
+    최대 9%라 그래프에서 바닥에 붙어 보이므로 표시에는 코어 기준을 쓴다.
+    """
+    return round(process_cpu_percent * rs.cpu_count(), 1)
+
+
+def render_charts(frame: pd.DataFrame, x: str, x_label: str) -> None:
+    """시스템 CPU/RAM, 프로세스 CPU(코어 기준), 프로세스 메모리를 각자 축으로 나란히 그린다."""
+    frame = frame.copy()
+    frame["process_cpu_core_percent"] = frame["process_cpu_percent"] * rs.cpu_count()
+    frame = frame.rename(columns=common.TIMELINE_LABELS)
+    labels = common.TIMELINE_LABELS
+    first, second, third = st.columns(3)
+    with first:
+        st.caption("시스템 CPU / RAM (%)")
+        st.line_chart(frame, x=x, y=[labels["cpu_percent"], labels["memory_percent"]],
+                      x_label=x_label, y_label="%")
+    with second:
+        st.caption("프로세스 CPU (코어 하나 기준 %)")
+        st.line_chart(frame, x=x, y=labels["process_cpu_core_percent"], x_label=x_label, y_label="%")
+    with third:
+        st.caption("프로세스 메모리 (MB)")
+        st.line_chart(frame, x=x, y=labels["process_memory_mb"], x_label=x_label, y_label="MB")
+
+
 def record_history(state: Any, now: dict[str, Any]) -> deque:
     """이번 갱신의 측정값을 세션 기록에 추가한다. 창(세션)마다 따로 쌓인다."""
     history = state.get("resource_history")
@@ -35,18 +64,7 @@ def render_history(history: deque, published_at: float | None) -> None:
     if len(history) < 2:
         st.caption("추이 수집 중... 다음 갱신부터 그래프가 그려집니다.")
         return
-    frame = pd.DataFrame(list(history)).rename(columns=common.TIMELINE_LABELS)
-    left, right = st.columns(2)
-    with left:
-        st.caption("CPU / RAM 사용률 (%)")
-        st.line_chart(frame, x="time",
-                      y=[common.TIMELINE_LABELS["cpu_percent"], common.TIMELINE_LABELS["memory_percent"],
-                         common.TIMELINE_LABELS["process_cpu_percent"]],
-                      x_label="시각", y_label="%")
-    with right:
-        st.caption("프로세스 메모리 (MB)")
-        st.line_chart(frame, x="time", y=common.TIMELINE_LABELS["process_memory_mb"],
-                      x_label="시각", y_label="MB")
+    render_charts(pd.DataFrame(list(history)), x="time", x_label="시각")
     span = (history[-1]["time"] - history[0]["time"]).total_seconds()
     note = f"{len(history)}점 · 최근 {span:.0f}초"
     if published_at:
@@ -66,7 +84,9 @@ def render_live(video_info: dict[str, Any] | None, published_at: float | None) -
     row[0].metric("시스템 CPU", f"{now['cpu_percent']:.1f}%")
     row[1].metric("시스템 RAM", f"{now['memory_percent']:.1f}%",
                   help=f"사용 {now['memory_used_mb']:,.0f} MB · 가용 {now['memory_available_mb']:,.0f} MB")
-    row[2].metric("프로세스 CPU", f"{now['process_cpu_percent']:.1f}%")
+    row[2].metric("프로세스 CPU", f"{core_percent(now['process_cpu_percent']):.0f}%",
+                  help=f"코어 하나 기준 (활성 상태 보기와 같은 기준). 전체 {rs.cpu_count()}코어 기준으로는 "
+                       f"{now['process_cpu_percent']:.1f}%")
     row[3].metric("프로세스 메모리", f"{now['process_memory_mb']:,.1f} MB")
     row = st.columns(4)
     row[0].metric("디스크 여유", f"{disk['disk_free_mb'] / 1024:,.1f} GB")
@@ -114,19 +134,11 @@ def render_report(result: dict[str, Any], published_at: float | None) -> None:
                   delta=f"{report['process_memory_delta_mb']:+,.1f} MB")
     row[3].metric("처리 중 피크 / 평균 CPU", f"{report['peak_cpu_percent']:.1f}% / {report['avg_cpu_percent']:.1f}%")
 
-    timeline = pd.DataFrame(report["timeline"]).rename(columns=common.TIMELINE_LABELS)
+    timeline = pd.DataFrame(report["timeline"])
     if len(timeline) >= 2:
-        left, right = st.columns(2)
-        with left:
-            st.caption("처리 중 CPU / RAM 사용률 (%)")
-            st.line_chart(timeline, x="elapsed_seconds",
-                          y=[common.TIMELINE_LABELS["cpu_percent"], common.TIMELINE_LABELS["memory_percent"],
-                             common.TIMELINE_LABELS["process_cpu_percent"]],
-                          x_label="경과 시간 (초)", y_label="%")
-        with right:
-            st.caption("처리 중 프로세스 메모리 (MB)")
-            st.line_chart(timeline, x="elapsed_seconds", y=common.TIMELINE_LABELS["process_memory_mb"],
-                          x_label="경과 시간 (초)", y_label="MB")
+        peak_core = timeline["process_cpu_percent"].max() * rs.cpu_count()
+        st.caption(f"처리 중 추이 (0.5초 간격) · 프로세스 CPU 피크 {peak_core:.0f}% (코어 기준)")
+        render_charts(timeline, x="elapsed_seconds", x_label="경과 시간 (초)")
     with st.expander("디스크 사용량 전후"):
         before, after = report["disk_before"], report["disk_after"]
         st.table({
