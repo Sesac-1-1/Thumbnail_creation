@@ -122,6 +122,17 @@ class AppRenderTests(unittest.TestCase):
         self.assertIn("디스크 여유", metrics)
         self.assertIn("아직 처리 기록이 없습니다", at.info[0].value)
         self.assertNotIn("최근 처리 보고서", [h.value for h in at.subheader])
+        # 추이 그래프: 첫 갱신은 점 하나라 "수집 중", 두 번째 갱신부터 선이 그려진다
+        self.assertEqual(len(at.session_state["resource_history"]), 1)
+        self.assertTrue(any("추이 수집 중" in c.value for c in at.caption))
+        with patch.object(rs, "get_system_resource", return_value=dict(SNAPSHOT, cpu_percent=55.0)):
+            at.run()
+        self.assertFalse(at.exception, [str(e) for e in at.exception])
+        history = at.session_state["resource_history"]
+        self.assertEqual([p["cpu_percent"] for p in history], [12.3, 55.0])
+        self.assertFalse(any("추이 수집 중" in c.value for c in at.caption))
+        self.assertTrue(any(c.value.startswith("2점 · 최근") for c in at.caption))
+        self.assertEqual(metrics_of(at)["시스템 CPU"], "55.0%")
 
     @unittest.skipUnless(cv2 is not None, "opencv가 필요합니다")
     def test_full_flow_and_cross_page_sharing(self):
