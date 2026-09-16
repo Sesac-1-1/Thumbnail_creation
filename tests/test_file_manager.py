@@ -40,14 +40,24 @@ class FileManagerTests(unittest.TestCase):
         saved.write_bytes(b'keep')
         (fm.TEMP_DIR / 'nested').mkdir()
         (fm.TEMP_DIR / 'nested' / 'file').write_text('remove')
-        (fm.TEMP_DIR / 'link').symlink_to(self.root, target_is_directory=True)
+        try:
+            (fm.TEMP_DIR / 'link').symlink_to(self.root, target_is_directory=True)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows requires symlink privilege for this test')
+            raise
         fm.cleanup_temp_files()
         fm.cleanup_temp_files()
         self.assertEqual(list(fm.TEMP_DIR.iterdir()), [])
         self.assertEqual(outside.read_text(), 'keep')
         self.assertEqual(saved.read_bytes(), b'keep')
         fm.TEMP_DIR.rmdir()
-        fm.TEMP_DIR.symlink_to(self.root, target_is_directory=True)
+        try:
+            fm.TEMP_DIR.symlink_to(self.root, target_is_directory=True)
+        except OSError as error:
+            if getattr(error, 'winerror', None) == 1314:
+                self.skipTest('Windows requires symlink privilege for this test')
+            raise
         with self.assertRaises(ValueError):
             fm.cleanup_temp_files()
         self.assertTrue(outside.exists())
