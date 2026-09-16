@@ -39,7 +39,11 @@ def write_synthetic_video(path: Path, size=(64, 48)) -> bool:
 
 
 class ManagedDirsMixin:
-    """file_manager 디렉터리를 임시 폴더로 바꾼다 (다른 테스트 파일과 같은 방식)."""
+    """file_manager 디렉터리를 임시 폴더로 바꾼다 (다른 테스트 파일과 같은 방식).
+
+    atexit 등록도 가짜로 바꾼다. 실제로 등록되면 테스트 프로세스가 끝날 때
+    (패치가 풀린 뒤) 진짜 temp/output 폴더를 지우게 되기 때문이다.
+    """
 
     def setUp(self):
         temp = TemporaryDirectory()
@@ -50,6 +54,12 @@ class ManagedDirsMixin:
                                  THUMBNAIL_DIR=self.root / "output" / "thumbnails")
         patches.start()
         self.addCleanup(patches.stop)
+        register = patch("atexit.register")
+        self.atexit_register = register.start()
+        self.addCleanup(register.stop)
+        if AppTest is not None:
+            import streamlit
+            streamlit.cache_resource.clear()  # _server_lifecycle이 테스트마다 다시 실행되게 한다
 
     def make_video(self) -> Path:
         video = self.root / "source.avi"
@@ -124,6 +134,21 @@ class PipelineTests(ManagedDirsMixin, unittest.TestCase):
         self.assertIn("offline", result["reason"])
         self.assertEqual(len(result["thumbnails"]), DEFAULT_SAMPLE_COUNT)
 
+    def test_cleanup_all_outputs_removes_only_app_files(self):
+        file_manager.ensure_directories()
+        (file_manager.TEMP_DIR / "upload_old.mp4").write_bytes(b"leftover")
+        (file_manager.TEMP_DIR / "nested").mkdir()
+        (file_manager.TEMP_DIR / "nested" / "part").write_bytes(b"x")
+        thumbs = file_manager.THUMBNAIL_DIR
+        (thumbs / ("thumbnail_" + "a" * 32 + ".jpg")).write_bytes(b"old")
+        (thumbs / ("thumbnail_" + "b" * 32 + ".PNG")).write_bytes(b"old")
+        (thumbs / "keep.txt").write_text("keep")
+        (thumbs / "photo.jpg").write_bytes(b"not ours")
+        self.app.cleanup_all_outputs()
+        self.assertEqual(list(file_manager.TEMP_DIR.iterdir()), [])
+        self.assertEqual(sorted(p.name for p in thumbs.iterdir()), ["keep.txt", "photo.jpg"])
+        self.app.cleanup_all_outputs()  # 비어 있어도, 두 번 불러도 문제없다
+
     def test_unreadable_or_missing_video(self):
         bad = self.app.save_upload(BytesIO(b"this is not a video"), "bad.mp4")
         with self.assertRaises(VideoServiceError):
@@ -153,13 +178,25 @@ class AppRenderTests(ManagedDirsMixin, unittest.TestCase):
         self.assertEqual(len(at.sidebar.slider), 1)
         self.assertEqual(at.sidebar.slider[0].value, DEFAULT_SAMPLE_COUNT)
 
-    def test_session_start_cleans_leftover_temp(self):
+    def test_server_start_cleans_leftovers_once_and_registers_exit_hook(self):
         file_manager.ensure_directories()
         (file_manager.TEMP_DIR / "upload_old.mp4").write_bytes(b"leftover")
+        old_thumb = file_manager.THUMBNAIL_DIR / ("thumbnail_" + "c" * 32 + ".jpg")
+        old_thumb.write_bytes(b"old")
         at = AppTest.from_file(str(APP_PATH), default_timeout=30)
         at.run()
-        self.assertFalse(at.exception)
+        self.assertFalse(at.exception, [str(e) for e in at.exception])
         self.assertEqual(list(file_manager.TEMP_DIR.iterdir()), [])
+        self.assertFalse(old_thumb.exists())
+        self.assertEqual(self.atexit_register.call_count, 1)
+        self.assertEqual(self.atexit_register.call_args[0][0].__name__, "_cleanup_at_exit")
+
+        # 같은 프로세스에서 다시 실행(새로고침·새 세션)해도 정리와 등록은 반복되지 않는다
+        (file_manager.TEMP_DIR / "upload_new.mp4").write_bytes(b"in use")
+        at.run()
+        AppTest.from_file(str(APP_PATH), default_timeout=30).run()
+        self.assertTrue((file_manager.TEMP_DIR / "upload_new.mp4").exists())
+        self.assertEqual(self.atexit_register.call_count, 1)
 
     @unittest.skipUnless(cv2 is not None, "opencv가 필요합니다")
     def test_full_flow_renders_with_upload(self):

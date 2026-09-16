@@ -6,9 +6,11 @@ services/ 아래 모듈은 Streamlit을 모른다. 이 파일은 그 모듈들�
 결과를 화면에 그리는 일만 한다. run_pipeline()은 Streamlit에 의존하지 않으므로
 브라우저 없이 테스트할 수 있다.
 """
+import atexit
 from io import BytesIO
 from pathlib import Path
 import shutil
+import sys
 from typing import Any, BinaryIO
 from uuid import uuid4
 import zipfile
@@ -91,6 +93,30 @@ def delete_thumbnails(thumbnails: list[dict[str, Any]]) -> None:
         Path(item["path"]).unlink(missing_ok=True)
 
 
+def cleanup_all_outputs() -> None:
+    """temp의 임시 영상과 output/thumbnails의 썸네일을 모두 지운다.
+
+    앱 시작 시(지난 비정상 종료가 남긴 것)와 정상 종료 시 호출된다.
+    썸네일은 file_manager가 만든 이름(thumbnail_*.jpg/jpeg/png)만 지우고,
+    다른 파일이나 심볼릭 링크는 건드리지 않는다.
+    """
+    file_manager.cleanup_temp_files()
+    directory = file_manager.THUMBNAIL_DIR
+    if not directory.is_dir():
+        return
+    for path in directory.iterdir():
+        if (path.name.startswith("thumbnail_") and path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+                and path.is_file() and not path.is_symlink()):
+            path.unlink(missing_ok=True)
+
+
+def _cleanup_at_exit() -> None:
+    try:
+        cleanup_all_outputs()
+    except (OSError, ValueError) as error:  # 종료 중이라 화면이 없으므로 stderr에만 남긴다
+        print(f"[app] 종료 시 파일 정리 실패: {error}", file=sys.stderr)
+
+
 def run_pipeline(
     video_path: Path,
     *,
@@ -145,6 +171,18 @@ def zip_thumbnails(thumbnails: list[dict[str, Any]]) -> bytes:
 # ----------------------------------------------------------------------------
 # 화면
 # ----------------------------------------------------------------------------
+
+@st.cache_resource(show_spinner=False)
+def _server_lifecycle() -> bool:
+    """streamlit run 프로세스당 한 번만 실행된다 (브라우저 세션·새로고침과 무관).
+
+    지난 실행이 비정상 종료로 남긴 파일을 지우고, 이번 프로세스가 정상 종료될 때
+    (Ctrl+C, kill) 같은 정리를 하도록 atexit에 등록한다.
+    """
+    cleanup_all_outputs()
+    atexit.register(_cleanup_at_exit)
+    return True
+
 
 def _upload_key(upload: Any) -> str:
     return getattr(upload, "file_id", None) or f"{upload.name}:{upload.size}"
@@ -254,10 +292,8 @@ def main() -> None:
                    "해상도와 가용 메모리에 따라 상한이 더 낮아질 수 있습니다.")
     options = {"size": size, "crop": crop, "image_format": image_format, "manual_sample_count": manual}
 
+    _server_lifecycle()
     state = st.session_state
-    if not state.get("session_ready"):
-        file_manager.cleanup_temp_files()  # 이전 실행이 남긴 임시 영상 정리
-        state["session_ready"] = True
 
     upload = st.file_uploader("영상 업로드", type=VIDEO_EXTENSIONS)
     if upload is None:
