@@ -1,0 +1,35 @@
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+
+# Python cache and local tooling files
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+env/
+
+# Local video inputs used for manual testing
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+
+# Generated files and temporary processing data
+temp/
+tmp/
+output/
+thumbnails/
+*.jpg
+*.jpeg
+*.png
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
