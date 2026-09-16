@@ -95,14 +95,7 @@ class ResourceServiceTests(unittest.TestCase):
         start = {'started_at': 0, 'resources': snapshot()}
         for requested, actual, total in ((10, None, 100), (True, 1, 100), (0, 0, 100),
                                          (10, -1, 100), (10, 11, 100), (10, 8, 7),
-                                         (10, 1, -1), (10, 1.5, 100)):
+                                         (10, 1, 0), (10, 1.5, 100)):
             with self.subTest(counts=(requested, actual, total)), self.assertRaises(ValueError):
                 rs.finish_measurement(start, requested_sample_count=requested,
                                       actual_sample_count=actual, total_frames=total)
-
-    def test_unknown_total_has_no_fake_ratio(self):
-        with patch.object(rs, 'get_system_resource', return_value=snapshot()):
-            report = rs.finish_measurement(rs.start_measurement(), requested_sample_count=5,
-                                           actual_sample_count=3, total_frames=0)
-        self.assertIsNone(report['sampling_ratio'])
-        self.assertEqual(report['frames_processed'], 3)

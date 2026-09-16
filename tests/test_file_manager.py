@@ -1,6 +1,5 @@
 """Run with: python3 -m unittest discover -s tests -v"""
 from pathlib import Path
-from io import BytesIO
 from tempfile import TemporaryDirectory
 import unittest
 import os
@@ -193,31 +192,6 @@ class FileManagerTests(unittest.TestCase):
         self._symlink(fm.THUMBNAIL_DIR, self.root, target_is_directory=True)
         with self.assertRaises(ValueError):
             fm.cleanup_stale_thumbnails(100)
-
-    def test_save_upload_stream_and_no_overwrite(self):
-        job = fm.create_temp_job_dir()
-        upload = BytesIO(b'video content')
-        upload.seek(3)
-        path = fm.save_uploaded_video(job, upload, '.mp4')
-        self.assertEqual(path.parent, job)
-        self.assertEqual(path.read_bytes(), b'video content')
-        self.assertEqual(upload.tell(), 3)
-        with self.assertRaises(FileExistsError):
-            fm.save_uploaded_video(job, BytesIO(b'replace'), '.mp4')
-        self.assertEqual(path.read_bytes(), b'video content')
-        with self.assertRaises(ValueError):
-            fm.save_uploaded_video(self.root, upload)
-        with self.assertRaises(ValueError):
-            fm.save_uploaded_video(job, upload, '/../escape.mp4')
-
-    def test_partial_upload_removed(self):
-        job = fm.create_temp_job_dir()
-        upload = BytesIO(b'video content')
-        with patch.object(upload, 'read', side_effect=[b'partial', OSError('read failed')]):
-            with self.assertRaisesRegex(OSError, 'read failed'):
-                fm.save_uploaded_video(job, upload)
-        self.assertEqual(list(job.iterdir()), [])
-        self.assertEqual(upload.tell(), 0)
 
 
 if __name__ == '__main__':

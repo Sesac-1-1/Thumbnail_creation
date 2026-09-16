@@ -160,27 +160,3 @@ def cleanup_stale_thumbnails(max_age_seconds: int) -> int:
             continue  # Another cleanup already removed this file; don't count it.
         deleted += 1
     return deleted
-
-
-def save_uploaded_video(job_dir: Path, upload: BinaryIO, suffix: str = '.mp4') -> Path:
-    """Stream an upload into its existing job directory with a fixed safe name."""
-    job_dir = _managed_child(job_dir, TEMP_DIR)
-    _validate_job_id(job_dir.name)
-    if not job_dir.is_dir():
-        raise ValueError('Upload job directory must already exist')
-    if suffix not in {'.mp4', '.m4v', '.mov', '.avi', '.mkv', '.webm', '.mpeg', '.mpg'}:
-        raise ValueError('Unsupported video filename extension')
-    path = job_dir / ('uploaded_video' + suffix)
-    position = upload.tell()
-    upload.seek(0)
-    try:
-        stream = path.open('xb')
-        try:
-            with stream:
-                shutil.copyfileobj(upload, stream, length=1024 * 1024)
-        except BaseException:
-            path.unlink(missing_ok=True)
-            raise
-    finally:
-        upload.seek(position)
-    return path
