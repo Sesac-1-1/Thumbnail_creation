@@ -70,26 +70,62 @@ def finish_measurement(start: dict) -> dict:
 }
 ```
 
+## 구현 확장 (`feat/resource`)
+
+명세의 함수명과 반환 키는 그대로 유지하고, 다음을 더했다.
+
+- `get_system_resource()`는 `process_cpu_percent`(현재 프로세스, 코어 수로 정규화)와
+  `process_memory_mb`(RSS)를 함께 반환한다.
+- `get_disk_resource()`는 `disk_free_mb`, `disk_percent`, `temp_dir_mb`, `thumbnail_dir_mb`를 반환한다.
+- `choose_sample_count(cpu, mem, *, video_info=None, memory_available_mb=None)`:
+  `video_service.get_video_info()`가 반환한 dict를 넘기면 프레임 1장 메모리(`width × height × 3`)와
+  가용 RAM의 25%로 상한을 두고, `frame_count`도 넘지 않는다. 결과는 항상 1~20이다.
+- `start_measurement(sample_interval=0.5)`는 백그라운드 스레드로 처리 중 CPU/RAM을 기록한다.
+  `finish_measurement()` 결과에 `timeline`(차트용 리스트), `peak_cpu_percent`, `avg_cpu_percent`,
+  `peak_memory_percent`, `peak_process_memory_mb`, `process_memory_before_mb/after_mb/delta_mb`,
+  `disk_before/after`, `sampling_error`가 추가된다. `sample_interval=None`이면 전후 스냅샷만 남긴다.
+- `measure()` 컨텍스트 매니저는 위 두 함수를 `finally`로 감싼다. 측정이 실패해도 본문은 실행되고
+  `report["error"]`에 이유가 남는다. Streamlit에서는 이 형태를 권장한다.
+- 측정 실패는 `ResourceServiceError`로 던진다. 호출 측은 이를 잡아 `DEFAULT_SAMPLE_COUNT`(10)로 진행한다.
+- `start_measurement()`가 반환한 dict는 스레드를 담고 있으므로 `st.session_state`에 넣지 않는다.
+  `finish_measurement()` 결과는 순수 데이터라 저장·표시해도 안전하다.
+- macOS 커널은 CPU 카운터를 약 1초에 한 번 갱신해 `psutil.cpu_percent(interval=0.1)`이 약 40% 확률로
+  정확히 0.0을 반환한다(실측 50회: 첫 읽기 성공 31회, 나머지는 최대 1.07초 뒤 값이 나옴). 그래서 0.1초 창에서
+  0.0이 나오면 0.1초씩 최대 1.1초까지 창을 연장한다. 틱이 누적되므로 첫 비영 값이 전체 창의 실제 비율이다.
+  Linux/Windows는 첫 읽기에서 바로 값이 나온다. 샘플러 간격을 0.5초 미만으로 줄이면 타임라인에 0.0이 섞일 수 있다.
+
 ## `app.py` 연결 예시
 
 ```python
+from services import file_manager
 from services.resource_service import (
+    DEFAULT_SAMPLE_COUNT,
+    ResourceServiceError,
     choose_sample_count,
-    finish_measurement,
     get_system_resource,
-    start_measurement,
+    measure,
 )
-from services.video_service import extract_frames
+from services.thumbnail_service import create_thumbnail, save_thumbnail
+from services.video_service import extract_frames, get_video_info
 
-before = get_system_resource()
-sample_count = choose_sample_count(
-    before["cpu_percent"],
-    before["memory_percent"],
-)
+info = get_video_info(video_path)
+try:
+    before = get_system_resource()
+    sample_count = choose_sample_count(
+        before["cpu_percent"],
+        before["memory_percent"],
+        video_info=info,
+        memory_available_mb=before["memory_available_mb"],
+    )
+except ResourceServiceError as error:
+    st.warning(f"자원 측정 실패: {error}")
+    sample_count = DEFAULT_SAMPLE_COUNT
 
-measurement = start_measurement()
-frames = extract_frames(video_path, sample_count=sample_count)
-resource_result = finish_measurement(measurement)
+with measure() as report:
+    frames = extract_frames(video_path, sample_count=sample_count)
+
+paths = [save_thumbnail(create_thumbnail(item["frame"])) for item in frames]
+st.line_chart(report["timeline"], x="elapsed_seconds", y=["cpu_percent", "memory_percent"])
 ```
 
 화면에는 다음 값을 표시하면 된다.
@@ -97,8 +133,10 @@ resource_result = finish_measurement(measurement)
 - 처리 전 CPU / RAM
 - 처리 후 CPU / RAM
 - 처리 시간
-- 선택된 샘플 수
+- 처리 중 CPU / RAM 피크와 평균, 시간축 차트
+- 선택된 샘플 수와 그 근거(자원 상태, 해상도, 가용 메모리)
 - 전체 프레임 수 대비 실제 처리 프레임 수
+- 디스크 여유 공간과 temp / output 사용량
 
 ## 구현 시 주의사항
 
@@ -112,11 +150,11 @@ resource_result = finish_measurement(measurement)
 
 ## 최소 완료 기준
 
-- [ ] `psutil`로 CPU 사용률을 읽는다.
-- [ ] RAM 사용률과 사용 가능 메모리를 읽는다.
-- [ ] 자원 상태에 따라 5 / 10 / 20개의 샘플 수를 반환한다.
-- [ ] 처리 시간을 측정한다.
-- [ ] 처리 전후 CPU·RAM 결과를 반환한다.
+- [x] `psutil`로 CPU 사용률을 읽는다.
+- [x] RAM 사용률과 사용 가능 메모리를 읽는다.
+- [x] 자원 상태에 따라 5 / 10 / 20개의 샘플 수를 반환한다.
+- [x] 처리 시간을 측정한다.
+- [x] 처리 전후 CPU·RAM 결과를 반환한다.
 - [ ] `app.py`에서 `video_service.extract_frames()`와 연결된다.
 
 ## 테스트 기준
@@ -129,3 +167,9 @@ resource_result = finish_measurement(measurement)
 - 처리 시간이 0 이상으로 반환됨
 - CPU와 RAM 결과가 숫자로 반환됨
 - CPU 또는 RAM이 높은 경우에도 함수가 정상 종료됨
+- 영상 메타데이터·가용 메모리에 따라 샘플 수 상한이 적용됨
+- 백그라운드 샘플러가 타임라인을 수집하고 예외를 `sampling_error`로 보고함
+- `measure()`가 본문 예외 시에도 스레드를 정리하고, 측정 실패 시에도 본문을 실행함
+- 모듈 import 시 OpenCV / Pillow가 로드되지 않음
+
+테스트 파일: `tests/test_resource_service.py` (psutil은 mock, 실제 영상 불필요)
