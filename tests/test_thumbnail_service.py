@@ -11,10 +11,25 @@ class ConversionTests(unittest.TestCase):
     def test_bgr_conversion(self):
         frame = np.full((12, 20, 3), [10, 20, 240], dtype=np.uint8)
         original = frame.copy()
-        result = ts._frame_to_image(frame[:, ::-1])
+        result = ts._frame_to_image(frame)
         self.assertIsInstance(result, Image.Image)
         self.assertEqual(result.mode, 'RGB')
         self.assertEqual(result.getpixel((0, 0)), (240, 20, 10))
+        np.testing.assert_array_equal(frame, original)
+
+    def test_multicolor_noncontiguous_frame(self):
+        frame = np.array([[[10, 20, 240], [255, 0, 0], [0, 255, 0]],
+                          [[0, 0, 255], [60, 80, 100], [1, 2, 3]]], dtype=np.uint8)
+        original = frame.copy()
+        result = ts._frame_to_image(frame)
+        self.assertEqual(result.getpixel((0, 0)), (240, 20, 10))
+        self.assertEqual(result.getpixel((1, 0)), (0, 0, 255))
+        self.assertEqual(result.getpixel((2, 1)), (3, 2, 1))
+        # Separate test of a non-contiguous spatial view, not channel conversion.
+        view = frame[:, ::-1]
+        result = ts._frame_to_image(view)
+        self.assertEqual(result.getpixel((0, 0)), (0, 255, 0))
+        self.assertEqual(result.getpixel((2, 1)), (255, 0, 0))
         np.testing.assert_array_equal(frame, original)
 
     def test_invalid_frames(self):
@@ -101,9 +116,13 @@ class SavingTests(unittest.TestCase):
                 self.assertGreater(red, 250)
                 self.assertLess(green, 5)
                 self.assertLess(blue, 5)
-        self.fm.cleanup_temp_files()
+        self.fm.cleanup_temp_files(self.fm.create_temp_job_dir())
         self.assertTrue(jpeg.exists())
         self.assertTrue(png.exists())
+        self.fm.delete_thumbnail(jpeg)
+        self.fm.delete_thumbnail(png)
+        self.assertFalse(jpeg.exists())
+        self.assertFalse(png.exists())
 
     def test_invalid_save_inputs_and_destination(self):
         thumbnail = ts.create_thumbnail(np.zeros((10, 10, 3), dtype=np.uint8))
@@ -131,3 +150,29 @@ class SavingTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, 'encoding failed'):
                 ts.save_thumbnail(thumbnail)
         self.assertEqual(list(self.fm.THUMBNAIL_DIR.iterdir()), [])
+
+    def test_format_specific_parameters(self):
+        from unittest.mock import patch
+        thumbnail = ts.create_thumbnail(np.zeros((10, 10, 3), dtype=np.uint8))
+        for quality in (1, 90, 95):
+            with patch.object(thumbnail, 'save', wraps=thumbnail.save) as save:
+                path = ts.save_thumbnail(thumbnail, quality=quality)
+                self.assertEqual(save.call_args.kwargs,
+                                 dict(format='JPEG', quality=quality, optimize=True))
+            self.fm.delete_thumbnail(path)
+        for compression in (None, 0, 6, 9):
+            with patch.object(thumbnail, 'save', wraps=thumbnail.save) as save:
+                path = ts.save_thumbnail(thumbnail, 'PNG', quality=-100,
+                                         compress_level=compression)
+                self.assertNotIn('quality', save.call_args.kwargs)
+                if compression is not None:
+                    self.assertEqual(save.call_args.kwargs['compress_level'], compression)
+            with Image.open(path) as image:
+                image.load()
+                self.assertEqual(image.format, 'PNG')
+            self.fm.delete_thumbnail(path)
+        for compression in (-1, 10, True, 1.5, '6'):
+            with self.subTest(compression=compression), self.assertRaises(ValueError):
+                ts.save_thumbnail(thumbnail, 'PNG', compress_level=compression)
+        with self.assertRaisesRegex(ValueError, 'only supported for PNG'):
+            ts.save_thumbnail(thumbnail, compress_level=6)
