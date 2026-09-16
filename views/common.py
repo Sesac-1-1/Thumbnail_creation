@@ -16,7 +16,8 @@ IMAGE_FORMATS = ["JPEG", "PNG"]
 TIMELINE_LABELS = {
     "cpu_percent": "시스템 CPU %",
     "memory_percent": "시스템 RAM %",
-    "process_cpu_percent": "프로세스 CPU %",
+    "process_cpu_percent": "프로세스 CPU % (전체 기준)",
+    "process_cpu_core_percent": "프로세스 CPU % (코어 기준)",
     "process_memory_mb": "프로세스 메모리 MB",
 }
 SAMPLE_POLICY_TEXT = "CPU 또는 RAM 80% 이상 → 5장, 60% 이상 → 10장, 그 외 20장 (해상도·가용 메모리로 상한 보정)"

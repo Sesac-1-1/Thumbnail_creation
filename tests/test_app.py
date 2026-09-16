@@ -66,6 +66,9 @@ class AppRenderTests(unittest.TestCase):
         self.atexit_register = register.start()
         self.addCleanup(register.stop)
         streamlit.cache_resource.clear()
+        cores = patch.object(rs, "cpu_count", return_value=4)  # 코어 기준 % 표시를 기계와 무관하게 만든다
+        cores.start()
+        self.addCleanup(cores.stop)
 
     def run_app(self, **kwargs):
         at = AppTest.from_file(str(APP_PATH), default_timeout=60, **kwargs)
@@ -119,6 +122,7 @@ class AppRenderTests(unittest.TestCase):
         metrics = metrics_of(at)
         self.assertEqual(metrics["시스템 CPU"], "12.3%")
         self.assertEqual(metrics["시스템 RAM"], "45.6%")
+        self.assertEqual(metrics["프로세스 CPU"], "2%", "전체 기준 0.5% × 4코어 = 코어 기준 2%")
         self.assertEqual(metrics["지금 처리하면"], "20장")
         self.assertIn("디스크 여유", metrics)
         self.assertIn("아직 처리 기록이 없습니다", at.info[0].value)
