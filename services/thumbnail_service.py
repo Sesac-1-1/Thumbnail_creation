@@ -1,18 +1,12 @@
 """Transform extracted uint8 BGR frames; no video or resource dependencies.
 
 Streamlit integration (guidance only; no Streamlit dependency here):
-- Session keys: job_id, video_metadata, candidate_frames, selected_frame,
-  requested_sample_count, actual_sample_count, processing_result,
-  resource_metrics, saved_thumbnail_path. Use actual_sample_count=len(frames).
 - On a new upload, call create_temp_job_dir() once and store its name as
   session_state["job_id"]. Keep metadata/frames/metrics in the same session.
 - Generate and save only when session_state["processing_result"] is absent.
   Store the returned Path there; reuse it on UI reruns.
 - After video processing is finished, cleanup_temp_files(job_dir) removes only
   that job's uploads. The saved thumbnail remains available for downloads.
-- Optional startup cleanup_stale_thumbnails(retention_seconds) removes expired
-  generated files. Choose a retention longer than the download window; on rerun
-  check saved_thumbnail_path.exists() and handle expired results explicitly.
 - When the user discards/replaces a result, call delete_thumbnail(saved_path)
   and clear the old session state. Do not delete outputs on every rerun.
 """
@@ -71,9 +65,8 @@ def save_thumbnail(
     overwritten. Filesystem errors propagate; failed writes are removed.
 
     JPEG uses quality (1..95), preserves optimize=True, and rejects a supplied
-    compress_level. PNG accepts only the unchanged quality=90 default (unused)
-    and rejects non-default JPEG quality. PNG uses compress_level (0..9), or
-    Pillow's default when it is None.
+    compress_level. PNG ignores quality intentionally (without validation),
+    and uses compress_level (0..9), or Pillow's default when it is None.
     """
     if not isinstance(thumbnail, Image.Image):
         raise TypeError("thumbnail must be a PIL.Image.Image")
@@ -89,8 +82,6 @@ def save_thumbnail(
             raise ValueError("compress_level is only supported for PNG")
         options = {"quality": quality, "optimize": True}
     else:
-        if type(quality) is not int or quality != 90:
-            raise ValueError("quality is JPEG-only; use compress_level for PNG")
         if compress_level is not None and (
                 type(compress_level) is not int or not 0 <= compress_level <= 9):
             raise ValueError("PNG compress_level must be an integer from 0 to 9 or None")

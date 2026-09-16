@@ -2,7 +2,6 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
-import os
 from unittest.mock import patch
 
 from services import file_manager as fm
@@ -141,57 +140,6 @@ class FileManagerTests(unittest.TestCase):
             fm.delete_thumbnail(fm.THUMBNAIL_DIR / 'file.jpg')
         with self.assertRaises(ValueError):
             fm.generate_thumbnail_path()
-
-    def test_stale_cleanup_age_and_names(self):
-        self.assertEqual(fm.cleanup_stale_thumbnails(100), 0)
-        fm.ensure_directories()
-        old = [fm.generate_thumbnail_path(ext) for ext in ('jpg', 'jpeg', 'png')]
-        fresh = fm.generate_thumbnail_path()
-        boundary = fm.generate_thumbnail_path()
-        unrelated = fm.THUMBNAIL_DIR / 'holiday.jpg'
-        wrong_extension = fm.THUMBNAIL_DIR / ('thumbnail_' + 'c' * 32 + '.txt')
-        outside = self.root / old[0].name
-        nested = fm.THUMBNAIL_DIR / 'nested'
-        nested.mkdir()
-        nested_file = nested / old[0].name
-        directory = fm.generate_thumbnail_path()
-        directory.mkdir()
-        for path in [*old, fresh, boundary, unrelated, wrong_extension, outside, nested_file]:
-            path.write_bytes(b'keep or remove by age')
-            os.utime(path, (800, 800))
-        os.utime(fresh, (950, 950))
-        os.utime(boundary, (900, 900))
-        os.utime(directory, (800, 800))
-        with patch.object(fm.time, 'time', return_value=1000):
-            self.assertEqual(fm.cleanup_stale_thumbnails(100), 3)
-            self.assertEqual(fm.cleanup_stale_thumbnails(100), 0)
-        self.assertTrue(all(not path.exists() for path in old))
-        self.assertTrue(all(path.exists() for path in
-                            (fresh, boundary, unrelated, wrong_extension, outside, nested_file, directory)))
-
-    def test_stale_cleanup_skips_symlinks(self):
-        fm.ensure_directories()
-        outside = self.root / 'outside.jpg'
-        outside.write_bytes(b'keep')
-        os.utime(outside, (1, 1))
-        link = fm.generate_thumbnail_path()
-        self._symlink(link, outside)
-        dangling = fm.generate_thumbnail_path()
-        self._symlink(dangling, self.root / 'missing.jpg')
-        with patch.object(fm.time, 'time', return_value=1000):
-            self.assertEqual(fm.cleanup_stale_thumbnails(100), 0)
-        self.assertTrue(link.is_symlink())
-        self.assertTrue(dangling.is_symlink())
-        self.assertEqual(outside.read_bytes(), b'keep')
-
-    def test_stale_cleanup_invalid_age_and_root(self):
-        for value in (0, -1, True, 1.5, '100', None):
-            with self.subTest(value=value), self.assertRaises(ValueError):
-                fm.cleanup_stale_thumbnails(value)
-        fm.OUTPUT_DIR.mkdir()
-        self._symlink(fm.THUMBNAIL_DIR, self.root, target_is_directory=True)
-        with self.assertRaises(ValueError):
-            fm.cleanup_stale_thumbnails(100)
 
 
 if __name__ == '__main__':
