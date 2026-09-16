@@ -2,6 +2,8 @@
 
 다른 브라우저 창에 띄워 두면 썸네일 생성 페이지에서 처리하는 동안의 변화가 실시간으로 보인다.
 """
+from collections import deque
+from datetime import datetime
 import time
 from typing import Any
 
@@ -12,15 +14,52 @@ from services import resource_service as rs
 from views import common
 
 REFRESH_SECONDS = 2
+HISTORY_POINTS = 60  # 2초 간격 × 60점 = 최근 2분
+HISTORY_COLUMNS = ("cpu_percent", "memory_percent", "process_cpu_percent", "process_memory_mb")
 
 
-def render_live(video_info: dict[str, Any] | None) -> None:
+def record_history(state: Any, now: dict[str, Any]) -> deque:
+    """이번 갱신의 측정값을 세션 기록에 추가한다. 창(세션)마다 따로 쌓인다."""
+    history = state.get("resource_history")
+    if history is None:
+        history = state["resource_history"] = deque(maxlen=HISTORY_POINTS)
+    history.append({"time": datetime.now(), **{key: now[key] for key in HISTORY_COLUMNS}})
+    return history
+
+
+def render_history(history: deque, published_at: float | None) -> None:
+    """최근 2분 추이. 점이 둘 이상 모여야 선이 된다."""
+    st.subheader("최근 2분 추이")
+    if len(history) < 2:
+        st.caption("추이 수집 중... 다음 갱신부터 그래프가 그려집니다.")
+        return
+    frame = pd.DataFrame(list(history)).rename(columns=common.TIMELINE_LABELS)
+    left, right = st.columns(2)
+    with left:
+        st.caption("CPU / RAM 사용률 (%)")
+        st.line_chart(frame, x="time",
+                      y=[common.TIMELINE_LABELS["cpu_percent"], common.TIMELINE_LABELS["memory_percent"],
+                         common.TIMELINE_LABELS["process_cpu_percent"]],
+                      x_label="시각", y_label="%")
+    with right:
+        st.caption("프로세스 메모리 (MB)")
+        st.line_chart(frame, x="time", y=common.TIMELINE_LABELS["process_memory_mb"],
+                      x_label="시각", y_label="MB")
+    span = (history[-1]["time"] - history[0]["time"]).total_seconds()
+    note = f"{len(history)}점 · 최근 {span:.0f}초"
+    if published_at:
+        note += f" · 마지막 처리 {time.strftime('%H:%M:%S', time.localtime(published_at))}"
+    st.caption(note)
+
+
+def render_live(video_info: dict[str, Any] | None, published_at: float | None) -> None:
     try:
         now = rs.get_system_resource()
         disk = rs.get_disk_resource()
     except rs.ResourceServiceError as error:
         st.warning(f"자원을 측정할 수 없습니다: {error}")
         return
+    history = record_history(st.session_state, now)
     row = st.columns(4)
     row[0].metric("시스템 CPU", f"{now['cpu_percent']:.1f}%")
     row[1].metric("시스템 RAM", f"{now['memory_percent']:.1f}%",
@@ -41,6 +80,7 @@ def render_live(video_info: dict[str, Any] | None) -> None:
     else:
         row[3].metric("지금 처리하면", f"{policy_only}장", help=common.SAMPLE_POLICY_TEXT)
     st.caption(f"마지막 측정 {time.strftime('%H:%M:%S')} · 규칙: {common.SAMPLE_POLICY_TEXT}")
+    render_history(history, published_at)
 
 
 def render_report(result: dict[str, Any], published_at: float | None) -> None:
@@ -104,7 +144,7 @@ def render() -> None:
     def live_dashboard() -> None:
         latest, published_at = common.latest_result()
         st.subheader("현재 시스템 상태")
-        render_live(latest["info"] if latest else None)
+        render_live(latest["info"] if latest else None, published_at)
         st.divider()
         if latest is None:
             st.info("아직 처리 기록이 없습니다. 썸네일 생성 페이지에서 영상을 처리하면 여기에 보고서가 나타납니다.")
