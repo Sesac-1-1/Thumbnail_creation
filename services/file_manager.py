@@ -6,6 +6,8 @@ from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import re
+import stat
+import time
 from typing import BinaryIO, Iterator
 from uuid import uuid4
 
@@ -13,6 +15,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEMP_DIR = PROJECT_ROOT / "temp"
 OUTPUT_DIR = PROJECT_ROOT / "output"
 THUMBNAIL_DIR = OUTPUT_DIR / "thumbnails"
+_THUMBNAIL_PREFIX = "thumbnail_"
 
 
 def _check_directories() -> None:
@@ -38,7 +41,7 @@ def generate_thumbnail_path(extension: str = "jpg") -> Path:
     if extension not in {"jpg", "jpeg", "png"}:
         raise ValueError("Thumbnail extension must be jpg, jpeg, or png")
     _check_directories()
-    return THUMBNAIL_DIR / f"thumbnail_{uuid4().hex}.{extension}"
+    return THUMBNAIL_DIR / f"{_THUMBNAIL_PREFIX}{uuid4().hex}.{extension}"
 
 
 @contextmanager
@@ -124,3 +127,36 @@ def delete_thumbnail(path: Path) -> None:
     if path.exists() and not path.is_file():
         raise ValueError("Thumbnail path must refer to a regular file")
     path.unlink(missing_ok=True)
+
+
+def cleanup_stale_thumbnails(max_age_seconds: int) -> int:
+    """Remove generated image files older than a positive integer age in seconds.
+
+    Only direct regular files named by generate_thumbnail_path are eligible.
+    Symlinks, directories, unrelated names and fresh files are left untouched.
+    The caller chooses when to run this and a retention period long enough for
+    downloads; no automatic cleanup runs on imports, saves or Streamlit reruns.
+    """
+    if type(max_age_seconds) is not int or max_age_seconds <= 0:
+        raise ValueError("max_age_seconds must be a positive integer")
+    _check_directories()
+    if not THUMBNAIL_DIR.exists():
+        return 0
+    cutoff = time.time() - max_age_seconds
+    deleted = 0
+    for path in THUMBNAIL_DIR.iterdir():
+        if re.fullmatch(re.escape(_THUMBNAIL_PREFIX) + r"[0-9a-f]{32}\.(jpg|jpeg|png)", path.name) is None:
+            continue
+        try:
+            info = path.lstat()  # Never follow symbolic links.
+        except FileNotFoundError:
+            continue
+        if not stat.S_ISREG(info.st_mode) or info.st_mtime >= cutoff:
+            continue
+        path = _thumbnail_path(path)
+        try:
+            path.unlink()
+        except FileNotFoundError:
+            continue  # Another cleanup already removed this file; don't count it.
+        deleted += 1
+    return deleted

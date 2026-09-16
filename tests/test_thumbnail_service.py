@@ -162,7 +162,7 @@ class SavingTests(unittest.TestCase):
             self.fm.delete_thumbnail(path)
         for compression in (None, 0, 6, 9):
             with patch.object(thumbnail, 'save', wraps=thumbnail.save) as save:
-                path = ts.save_thumbnail(thumbnail, 'PNG', quality=-100,
+                path = ts.save_thumbnail(thumbnail, 'PNG',
                                          compress_level=compression)
                 self.assertNotIn('quality', save.call_args.kwargs)
                 if compression is not None:
@@ -176,3 +176,9 @@ class SavingTests(unittest.TestCase):
                 ts.save_thumbnail(thumbnail, 'PNG', compress_level=compression)
         with self.assertRaisesRegex(ValueError, 'only supported for PNG'):
             ts.save_thumbnail(thumbnail, compress_level=6)
+
+    def test_png_rejects_jpeg_quality(self):
+        thumbnail = ts.create_thumbnail(np.zeros((10, 10, 3), dtype=np.uint8))
+        for quality in (-100, 80, 95, True, None):
+            with self.subTest(quality=quality), self.assertRaisesRegex(ValueError, 'JPEG-only'):
+                ts.save_thumbnail(thumbnail, 'PNG', quality=quality)
