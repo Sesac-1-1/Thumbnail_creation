@@ -114,7 +114,8 @@ class AppRenderTests(unittest.TestCase):
             at.switch_page(RESOURCE_PAGE).run()
         self.assertFalse(at.exception, [str(e) for e in at.exception])
         self.assertEqual(at.title[0].value, "자원 모니터링")
-        self.assertEqual(len(at.toggle), 1)
+        self.assertEqual([b.label for b in at.button], ["⏸ 일시정지"])
+        self.assertTrue(any(c.value.startswith("● 실시간") for c in at.caption))
         metrics = metrics_of(at)
         self.assertEqual(metrics["시스템 CPU"], "12.3%")
         self.assertEqual(metrics["시스템 RAM"], "45.6%")
@@ -133,6 +134,18 @@ class AppRenderTests(unittest.TestCase):
         self.assertFalse(any("추이 수집 중" in c.value for c in at.caption))
         self.assertTrue(any(c.value.startswith("2점 · 최근") for c in at.caption))
         self.assertEqual(metrics_of(at)["시스템 CPU"], "55.0%")
+        # 일시정지 → 재생: 버튼 라벨과 상태 표시가 바뀌고, 멈춘 동안에도 화면은 남아 있다
+        with patch.object(rs, "get_system_resource", return_value=SNAPSHOT):
+            at.button[0].click().run()
+            self.assertFalse(at.exception, [str(e) for e in at.exception])
+            self.assertTrue(at.session_state["monitor_paused"])
+            self.assertEqual(at.button[0].label, "▶ 재생")
+            self.assertTrue(any(c.value.startswith("⏸ 정지됨") for c in at.caption))
+            self.assertIn("시스템 CPU", metrics_of(at))
+            at.button[0].click().run()
+            self.assertFalse(at.session_state["monitor_paused"])
+            self.assertEqual(at.button[0].label, "⏸ 일시정지")
+            self.assertTrue(any(c.value.startswith("● 실시간") for c in at.caption))
 
     @unittest.skipUnless(cv2 is not None, "opencv가 필요합니다")
     def test_full_flow_and_cross_page_sharing(self):

@@ -14,6 +14,8 @@ from services import resource_service as rs
 from views import common
 
 REFRESH_SECONDS = 2
+PAUSE_LABEL = "⏸ 일시정지"
+RESUME_LABEL = "▶ 재생"
 HISTORY_POINTS = 60  # 2초 간격 × 60점 = 최근 2분
 HISTORY_COLUMNS = ("cpu_percent", "memory_percent", "process_cpu_percent", "process_memory_mb")
 
@@ -79,7 +81,7 @@ def render_live(video_info: dict[str, Any] | None, published_at: float | None) -
                       help=f"최근 영상({video_info['resolution']}) 기준. 자원 정책만으로는 {policy_only}장")
     else:
         row[3].metric("지금 처리하면", f"{policy_only}장", help=common.SAMPLE_POLICY_TEXT)
-    st.caption(f"마지막 측정 {time.strftime('%H:%M:%S')} · 규칙: {common.SAMPLE_POLICY_TEXT}")
+    st.caption("규칙: " + common.SAMPLE_POLICY_TEXT)
     render_history(history, published_at)
 
 
@@ -134,16 +136,36 @@ def render_report(result: dict[str, Any], published_at: float | None) -> None:
         })
 
 
+def render_status(paused: bool) -> None:
+    """갱신 상태와 마지막 측정 시각. 조각 안에 있어 갱신마다 시각이 바뀐다."""
+    measured = time.strftime("%H:%M:%S")
+    if paused:
+        st.caption(f"⏸ 정지됨 · 마지막 측정 {measured} · '{RESUME_LABEL}'을 누르면 이어서 갱신합니다")
+    else:
+        st.caption(f"● 실시간 · {REFRESH_SECONDS}초마다 갱신 · 마지막 측정 {measured}")
+
+
+def _toggle_pause() -> None:
+    """on_click 콜백은 화면을 다시 그리기 전에 실행되므로 버튼 라벨이 곧바로 새 상태를 반영한다."""
+    st.session_state["monitor_paused"] = not st.session_state.get("monitor_paused", False)
+
+
 def render() -> None:
     st.title("자원 모니터링")
     st.caption("현재 시스템 상태와 샘플 수 정책, 그리고 썸네일 생성 페이지에서 마지막으로 처리한 결과의 "
                "자원 사용을 보여줍니다. 다른 창에 띄워 두면 처리 중 변화가 실시간으로 보입니다.")
-    auto = st.toggle(f"{REFRESH_SECONDS}초마다 자동 갱신", value=True)
+    paused = bool(st.session_state.get("monitor_paused", False))
+    header, control = st.columns([5, 1])
+    with control:
+        # 버튼은 상태를 갖지 않으므로 세션에 저장한다. 누르면 전체가 다시 실행되어 조각의 갱신 주기가 바뀐다.
+        st.button(RESUME_LABEL if paused else PAUSE_LABEL, key="monitor_pause", on_click=_toggle_pause)
+    with header:
+        st.subheader("현재 시스템 상태")
 
-    @st.fragment(run_every=REFRESH_SECONDS if auto else None)
+    @st.fragment(run_every=None if paused else REFRESH_SECONDS)
     def live_dashboard() -> None:
         latest, published_at = common.latest_result()
-        st.subheader("현재 시스템 상태")
+        render_status(paused)
         render_live(latest["info"] if latest else None, published_at)
         st.divider()
         if latest is None:
