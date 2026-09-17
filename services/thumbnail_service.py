@@ -68,7 +68,7 @@ def save_thumbnail(
     return path
 
 
-def add_text_overlay(thumbnail: Image.Image, text: str, font_size: int = 32) -> Image.Image:
+def add_text_overlay(thumbnail: Image.Image, text: str, font_size: int = 16) -> Image.Image:
     """Return a copy with a fitted, wrapped Korean caption overlaid."""
     from PIL import ImageDraw, ImageFont
 
@@ -89,7 +89,7 @@ def add_text_overlay(thumbnail: Image.Image, text: str, font_size: int = 32) -> 
     selected_font = None
 
     # Fit long titles by wrapping at word/character boundaries and shrinking.
-    for size in range(font_size, 11, -1):
+    for size in range(font_size, 9, -1):
         font = ImageFont.truetype(str(font_path), size) if font_path else ImageFont.load_default()
         lines: list[str] = []
         for paragraph in text.strip().splitlines():
@@ -115,7 +115,7 @@ def add_text_overlay(thumbnail: Image.Image, text: str, font_size: int = 32) -> 
              for line in selected_lines]
     text_width = max(box[2] - box[0] for box in boxes)
     text_height = sum(box[3] - box[1] for box in boxes) + spacing * (len(boxes) - 1)
-    pad_x, pad_y = 12, 8
+    pad_x, pad_y = 6, 4
     x = (result.width - text_width) // 2
     y = result.height - text_height - pad_y * 2 - 4
     draw.rounded_rectangle((x - pad_x, y - pad_y, x + text_width + pad_x, y + text_height + pad_y),

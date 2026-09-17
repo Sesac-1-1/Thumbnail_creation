@@ -138,13 +138,13 @@ def render() -> None:
     options = sidebar_options()
     state = st.session_state
 
-    upload = st.file_uploader("영상 업로드", type=common.VIDEO_EXTENSIONS)
-    if upload is None:
+    upload = st.file_uploader("영상 업로드", type=common.VIDEO_EXTENSIONS, key="video_uploader")
+    if upload is None and not state.get("video_path"):
         st.info("영상 파일(mp4, mov, avi, mkv, webm)을 업로드하세요.")
         return
 
-    key = _upload_key(upload)
-    if state.get("upload_key") != key:
+    key = _upload_key(upload) if upload is not None else state.get("upload_key")
+    if upload is not None and state.get("upload_key") != key:
         _discard_result(state)
         state.pop("info", None)
         state.pop("video_path", None)
