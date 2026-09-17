@@ -18,13 +18,12 @@ GRID_COLUMNS = 5
 def sidebar_options() -> dict[str, Any]:
     with st.sidebar:
         st.header("옵션")
-        auto = st.toggle("샘플 수 자동 결정 (자원 기반)", value=True)
+        auto = st.toggle("샘플 수 자동 결정", value=True)
         manual = None if auto else st.slider("샘플 프레임 수", MIN_SAMPLE_COUNT, MAX_SAMPLE_COUNT,
                                              DEFAULT_SAMPLE_COUNT)
         size = common.SIZE_PRESETS[st.selectbox("썸네일 크기", list(common.SIZE_PRESETS))]
         crop = st.checkbox("중앙 크롭 (여백 대신 잘라내기)", value=False)
         image_format = st.radio("저장 형식", common.IMAGE_FORMATS, horizontal=True)
-        st.caption("자동 결정 규칙: " + common.SAMPLE_POLICY_TEXT)
     return {"size": size, "crop": crop, "image_format": image_format, "manual_sample_count": manual}
 
 
@@ -55,7 +54,6 @@ def render_sampling_summary(result: dict[str, Any]) -> None:
     processed = len(result["thumbnails"])
     st.markdown(f"**샘플 {result['sample_count']}장 선택, {processed}장 처리** "
                 f"(전체 {total or '?'}프레임) · {result['reason']}")
-    st.page_link(common.RESOURCE_PAGE, label="처리 중 자원 사용과 근거를 자원 모니터링 페이지에서 보기", icon="📊")
 
 
 def render_thumbnails(result: dict[str, Any]) -> None:
@@ -68,8 +66,6 @@ def render_thumbnails(result: dict[str, Any]) -> None:
     for position, item in enumerate(thumbnails):
         columns[position % GRID_COLUMNS].image(
             str(item["path"]), caption=f"프레임 {item['index']} · {item['timestamp_seconds']:.2f}초")
-    st.download_button("썸네일 전체 다운로드 (zip)", data=pipeline.zip_thumbnails(thumbnails),
-                       file_name="thumbnails.zip", mime="application/zip")
 
     if st.button("AI로 추천 프레임·문구 분석"):
         try:

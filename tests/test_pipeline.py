@@ -4,7 +4,6 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import patch
-import zipfile
 
 import numpy as np
 from PIL import Image
@@ -80,9 +79,6 @@ class PipelineTests(unittest.TestCase):
         self.assertTrue(self.video.is_file(), "파이프라인은 영상 파일을 지우지 않는다")
         self.assertGreaterEqual(result["report"]["elapsed_seconds"], 0.0)
         self.assertEqual(result["options"]["image_format"], "PNG")
-        with zipfile.ZipFile(BytesIO(pipeline.zip_thumbnails(result["thumbnails"]))) as archive:
-            self.assertEqual(sorted(archive.namelist()),
-                             ["frame_000000.png", "frame_000006.png", "frame_000011.png"])
         pipeline.delete_thumbnails(result["thumbnails"])
         pipeline.delete_thumbnails(result["thumbnails"])
         self.assertEqual(list(file_manager.THUMBNAIL_DIR.iterdir()), [])
