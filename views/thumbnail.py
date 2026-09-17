@@ -94,25 +94,23 @@ def render_thumbnails(result: dict[str, Any]) -> None:
 
     analysis = result.get("ai_analysis")
     if analysis:
-        st.success(f"AI 추천 프레임: {analysis['best_index']}번")
+        candidates_by_index = {candidate["index"]: candidate
+                               for candidate in analysis["candidates"]}
+        st.success(f"AI 추천 프레임 {len(candidates_by_index)}개를 찾았습니다.")
         frame_options = {
             f"프레임 {item['index']} · {item['timestamp_seconds']:.2f}초": item["index"]
-            for item in thumbnails
+            for item in thumbnails if item["index"] in candidates_by_index
         }
         frame_labels = list(frame_options)
-        recommended_label = next(
-            (label for label, index in frame_options.items()
-             if index == analysis["best_index"]),
-            frame_labels[0],
-        )
         selected_frame_label = st.selectbox(
             "사용할 프레임 선택", frame_labels,
-            index=frame_labels.index(recommended_label),
+            help="AI가 추천한 프레임 중 하나를 선택하세요.",
         )
         selected_frame_index = frame_options[selected_frame_label]
-        suggestions = analysis["suggestions"]
+        suggestions = candidates_by_index[selected_frame_index]["suggestions"]
         if suggestions:
-            selected_text = st.selectbox("사용할 문구 선택", suggestions)
+            selected_text = st.selectbox("사용할 문구 선택", suggestions,
+                                         help="선택한 프레임에 맞는 추천 문구입니다.")
             if st.button("선택한 문구로 최종 썸네일 만들기"):
                 selected = next((item for item in thumbnails
                                  if item["index"] == selected_frame_index), None)

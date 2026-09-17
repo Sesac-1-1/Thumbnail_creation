@@ -61,14 +61,15 @@ def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
     if not has_api_key():
         raise RuntimeError("OPENAI_API_KEY를 찾을 수 없습니다")
 
-    model = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
+    model = os.getenv("OPENAI_MODEL") or "gpt-5.6-luna"
     content: list[dict[str, Any]] = [{
         "type": "input_text",
         "text": (
             "아래 영상 프레임 후보를 유튜브 썸네일 관점에서 분석해줘. "
-            "가장 시선을 끄는 프레임의 후보 index 하나를 고르고, "
-            "짧고 클릭을 유도하는 한국어 썸네일 문구 3개를 제안해줘. "
-            '반드시 JSON만 반환: {"best_index": 숫자, "suggestions": ["문구1", "문구2", "문구3"]}'
+            "가장 좋은 프레임 3개를 순위대로 고르고, 각 프레임마다 "
+            "짧고 클릭을 유도하는 한국어 썸네일 문구 3개씩 제안해줘. "
+            "반드시 후보 index에 있는 프레임만 선택해. "
+            '반드시 JSON만 반환: {"candidates": [{"index": 숫자, "suggestions": ["문구1", "문구2", "문구3"]}]}'
         ),
     }]
     for item in frames:
@@ -94,13 +95,20 @@ def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
         raise RuntimeError("AI 응답을 JSON으로 해석할 수 없습니다") from error
 
     valid_indexes = {item["index"] for item in frames}
-    best_index = parsed.get("best_index")
-    if best_index not in valid_indexes:
-        raise RuntimeError("AI가 존재하지 않는 프레임을 선택했습니다")
-    suggestions = [str(value).strip() for value in parsed.get("suggestions", []) if str(value).strip()]
+    candidates = []
+    for candidate in parsed.get("candidates", []):
+        index = candidate.get("index")
+        if index not in valid_indexes:
+            continue
+        suggestions = [str(value).strip() for value in candidate.get("suggestions", [])
+                       if str(value).strip()]
+        if suggestions:
+            candidates.append({"index": index, "suggestions": suggestions[:3]})
+    if not candidates:
+        raise RuntimeError("AI가 유효한 프레임 추천 결과를 반환하지 않았습니다")
     return {
-        "best_index": best_index,
-        "suggestions": suggestions[:3],
+        "best_index": candidates[0]["index"],
+        "candidates": candidates[:3],
         "model": model,
         "usage": getattr(response, "usage", None),
     }
