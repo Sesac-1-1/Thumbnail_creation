@@ -78,7 +78,9 @@ def add_text_overlay(thumbnail: Image.Image, text: str, font_size: int = 16) -> 
         raise ValueError("text must be a nonempty string")
     if type(font_size) is not int or font_size <= 0:
         raise ValueError("font_size must be a positive integer")
-    font_paths = [Path(r"C:\Windows\Fonts\malgunbd.ttf"), Path(r"C:\Windows\Fonts\malgun.ttf"),
+    font_paths = [Path("/System/Library/Fonts/AppleSDGothicNeo.ttc"),          # macOS 기본
+                  Path("/System/Library/Fonts/Supplemental/AppleGothic.ttf"),   # macOS 예비
+                  Path(r"C:\Windows\Fonts\malgunbd.ttf"), Path(r"C:\Windows\Fonts\malgun.ttf"),
                   Path(r"C:\Windows\Fonts\gulim.ttc"),
                   Path(r"/usr/share/fonts/truetype/nanum/NanumGothic.ttf")]
     result = thumbnail.copy()
