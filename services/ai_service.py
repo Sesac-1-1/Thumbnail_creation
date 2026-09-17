@@ -13,16 +13,11 @@ from openai import OpenAI
 
 
 def _load_api_key() -> None:
-    """Load the existing pizza-lab key without copying it into this project."""
+    """Load the API key from this project's root .env file."""
     project_root = Path(__file__).resolve().parents[1]
-    candidates = [
-        project_root / ".env",
-        Path.cwd() / ".env",
-        Path(r"C:\Users\hanjy\OneDrive\문서\ChatGPT\새싹\pizza-lab\.env"),
-    ]
-    for env_path in candidates:
-        if env_path.is_file():
-            load_dotenv(env_path, override=False)
+    env_path = project_root / ".env"
+    if env_path.is_file():
+        load_dotenv(env_path, override=False)
 
 
 def has_api_key() -> bool:
@@ -41,6 +36,24 @@ def _to_data_url(frame: Any, image_format: str = "jpeg") -> str:
     return f"data:image/{image_format};base64,{data}"
 
 
+def _parse_json_response(raw: str) -> dict[str, Any]:
+    """Parse plain JSON even when the model wraps it in Markdown or prose."""
+    text = raw.strip()
+    if text.startswith("```"):
+        lines = text.splitlines()
+        text = "\n".join(lines[1:-1]).strip()
+    try:
+        value = json.loads(text)
+    except json.JSONDecodeError:
+        start, end = text.find("{"), text.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        value = json.loads(text[start:end + 1])
+    if not isinstance(value, dict):
+        raise json.JSONDecodeError("AI response must be an object", text, 0)
+    return value
+
+
 def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
     """Choose the best frame and suggest Korean thumbnail copy in one request."""
     if not frames:
@@ -48,7 +61,7 @@ def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
     if not has_api_key():
         raise RuntimeError("OPENAI_API_KEY를 찾을 수 없습니다")
 
-    model = os.getenv("OPENAI_MODEL") or "gpt-5.6-luna"
+    model = os.getenv("OPENAI_MODEL") or "gpt-4o-mini"
     content: list[dict[str, Any]] = [{
         "type": "input_text",
         "text": (
@@ -76,7 +89,7 @@ def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
     )
     raw = response.output_text.strip()
     try:
-        parsed = json.loads(raw)
+        parsed = _parse_json_response(raw)
     except json.JSONDecodeError as error:
         raise RuntimeError("AI 응답을 JSON으로 해석할 수 없습니다") from error
 
