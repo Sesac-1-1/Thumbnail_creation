@@ -55,7 +55,6 @@ def render_sampling_summary(result: dict[str, Any]) -> None:
     processed = len(result["thumbnails"])
     st.markdown(f"**샘플 {result['sample_count']}장 선택, {processed}장 처리** "
                 f"(전체 {total or '?'}프레임) · {result['reason']}")
-    st.page_link(common.RESOURCE_PAGE, label="처리 중 자원 사용과 근거를 자원 모니터링 페이지에서 보기", icon="📊")
 
 
 def render_thumbnails(result: dict[str, Any]) -> None:
