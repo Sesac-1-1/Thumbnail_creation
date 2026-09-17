@@ -86,7 +86,9 @@ def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
     response = OpenAI().responses.create(
         model=model,
         input=[{"role": "user", "content": content}],
-        max_output_tokens=200,
+        # Three frames plus three Korean suggestions per frame need more room
+        # than the previous single-frame response limit.
+        max_output_tokens=800,
     )
     raw = response.output_text.strip()
     try:
