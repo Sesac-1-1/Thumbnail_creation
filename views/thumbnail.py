@@ -18,13 +18,12 @@ GRID_COLUMNS = 5
 def sidebar_options() -> dict[str, Any]:
     with st.sidebar:
         st.header("옵션")
-        auto = st.toggle("샘플 수 자동 결정 (자원 기반)", value=True)
+        auto = st.toggle("샘플 수 자동 결정", value=True)
         manual = None if auto else st.slider("샘플 프레임 수", MIN_SAMPLE_COUNT, MAX_SAMPLE_COUNT,
                                              DEFAULT_SAMPLE_COUNT)
         size = common.SIZE_PRESETS[st.selectbox("썸네일 크기", list(common.SIZE_PRESETS))]
         crop = st.checkbox("중앙 크롭 (여백 대신 잘라내기)", value=False)
         image_format = st.radio("저장 형식", common.IMAGE_FORMATS, horizontal=True)
-        st.caption("자동 결정 규칙: " + common.SAMPLE_POLICY_TEXT)
     return {"size": size, "crop": crop, "image_format": image_format, "manual_sample_count": manual}
 
 
