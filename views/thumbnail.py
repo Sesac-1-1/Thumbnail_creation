@@ -1,12 +1,15 @@
 """페이지 1 · 썸네일 생성: 업로드, 옵션, 생성, 썸네일 그리드."""
 from typing import Any
 
+import cv2
 import streamlit as st
 
 import pipeline
 from services import file_manager
 from services.resource_service import DEFAULT_SAMPLE_COUNT, MAX_SAMPLE_COUNT, MIN_SAMPLE_COUNT
 from services.video_service import VideoServiceError, get_video_info
+from services import ai_service
+from services.thumbnail_service import add_text_overlay, save_thumbnail
 from views import common
 
 GRID_COLUMNS = 5
@@ -67,6 +70,66 @@ def render_thumbnails(result: dict[str, Any]) -> None:
             str(item["path"]), caption=f"프레임 {item['index']} · {item['timestamp_seconds']:.2f}초")
     st.download_button("썸네일 전체 다운로드 (zip)", data=pipeline.zip_thumbnails(thumbnails),
                        file_name="thumbnails.zip", mime="application/zip")
+
+    if st.button("AI로 추천 프레임·문구 분석"):
+        try:
+            # Analyze the exact thumbnails currently shown on screen. Re-reading
+            # the video here could produce different frame positions from the
+            # already-rendered candidate list.
+            frames = []
+            for item in thumbnails:
+                frame = cv2.imread(str(item["path"]))
+                if frame is None:
+                    raise ValueError(f"썸네일을 읽을 수 없습니다: {item['path']}")
+                frames.append({
+                    "index": item["index"],
+                    "timestamp_seconds": item["timestamp_seconds"],
+                    "frame": frame,
+                })
+            with st.spinner("AI가 썸네일 후보를 분석하는 중..."):
+                analysis = ai_service.analyze_candidates(frames)
+            result["ai_analysis"] = analysis
+        except Exception as error:
+            st.error(f"AI 분석에 실패했습니다: {error}")
+
+    analysis = result.get("ai_analysis")
+    if analysis:
+        st.success(f"AI 추천 프레임: {analysis['best_index']}번")
+        frame_options = {
+            f"프레임 {item['index']} · {item['timestamp_seconds']:.2f}초": item["index"]
+            for item in thumbnails
+        }
+        frame_labels = list(frame_options)
+        recommended_label = next(
+            (label for label, index in frame_options.items()
+             if index == analysis["best_index"]),
+            frame_labels[0],
+        )
+        selected_frame_label = st.selectbox(
+            "사용할 프레임 선택", frame_labels,
+            index=frame_labels.index(recommended_label),
+        )
+        selected_frame_index = frame_options[selected_frame_label]
+        suggestions = analysis["suggestions"]
+        if suggestions:
+            selected_text = st.selectbox("사용할 문구 선택", suggestions)
+            if st.button("선택한 문구로 최종 썸네일 만들기"):
+                selected = next((item for item in thumbnails
+                                 if item["index"] == selected_frame_index), None)
+                if selected is None:
+                    st.error("추천 프레임을 현재 후보 목록에서 찾을 수 없습니다.")
+                else:
+                    from PIL import Image
+                    with Image.open(selected["path"]) as image:
+                        final_image = add_text_overlay(image.convert("RGB"), selected_text)
+                    final_path = save_thumbnail(final_image, result["options"]["image_format"])
+                    result["final_thumbnail_path"] = str(final_path)
+                    st.success("최종 썸네일을 만들었습니다.")
+        if result.get("final_thumbnail_path"):
+            st.image(result["final_thumbnail_path"], caption="최종 썸네일")
+            with open(result["final_thumbnail_path"], "rb") as stream:
+                st.download_button("최종 썸네일 다운로드", stream.read(),
+                                   file_name="final_thumbnail.jpg", mime="image/jpeg")
 
 
 def render() -> None:

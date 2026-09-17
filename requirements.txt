@@ -4,3 +4,5 @@ opencv-python>=4.10
 Pillow>=10.4,<13
 numpy>=1.26,<3
 psutil>=6,<8
+openai>=1.0
+python-dotenv>=1.0

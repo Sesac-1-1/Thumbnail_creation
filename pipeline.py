@@ -128,6 +128,7 @@ def run_pipeline(
         raise
     return {
         "filename": info["filename"],
+        "video_path": str(video_path),
         "info": info,
         **decision,
         "report": report,

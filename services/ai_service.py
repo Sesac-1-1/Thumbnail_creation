@@ -1,0 +1,93 @@
+"""AI-assisted thumbnail candidate selection and copy suggestions."""
+
+from __future__ import annotations
+
+import base64
+import json
+import os
+from pathlib import Path
+from typing import Any
+
+from dotenv import load_dotenv
+from openai import OpenAI
+
+
+def _load_api_key() -> None:
+    """Load the existing pizza-lab key without copying it into this project."""
+    project_root = Path(__file__).resolve().parents[1]
+    candidates = [
+        project_root / ".env",
+        Path.cwd() / ".env",
+        Path(r"C:\Users\hanjy\OneDrive\문서\ChatGPT\새싹\pizza-lab\.env"),
+    ]
+    for env_path in candidates:
+        if env_path.is_file():
+            load_dotenv(env_path, override=False)
+
+
+def has_api_key() -> bool:
+    _load_api_key()
+    return bool(os.getenv("OPENAI_API_KEY"))
+
+
+def _to_data_url(frame: Any, image_format: str = "jpeg") -> str:
+    """Encode an OpenCV BGR frame as a compact data URL."""
+    import cv2
+
+    success, encoded = cv2.imencode(f".{image_format}", frame)
+    if not success:
+        raise ValueError("프레임 이미지를 인코딩할 수 없습니다")
+    data = base64.b64encode(encoded.tobytes()).decode("ascii")
+    return f"data:image/{image_format};base64,{data}"
+
+
+def analyze_candidates(frames: list[dict[str, Any]]) -> dict[str, Any]:
+    """Choose the best frame and suggest Korean thumbnail copy in one request."""
+    if not frames:
+        raise ValueError("분석할 프레임이 없습니다")
+    if not has_api_key():
+        raise RuntimeError("OPENAI_API_KEY를 찾을 수 없습니다")
+
+    model = os.getenv("OPENAI_MODEL") or "gpt-5.6-luna"
+    content: list[dict[str, Any]] = [{
+        "type": "input_text",
+        "text": (
+            "아래 영상 프레임 후보를 유튜브 썸네일 관점에서 분석해줘. "
+            "가장 시선을 끄는 프레임의 후보 index 하나를 고르고, "
+            "짧고 클릭을 유도하는 한국어 썸네일 문구 3개를 제안해줘. "
+            '반드시 JSON만 반환: {"best_index": 숫자, "suggestions": ["문구1", "문구2", "문구3"]}'
+        ),
+    }]
+    for item in frames:
+        content.append({
+            "type": "input_text",
+            "text": f"후보 index: {item['index']}, 시점: {item['timestamp_seconds']}초",
+        })
+        content.append({
+            "type": "input_image",
+            "image_url": _to_data_url(item["frame"]),
+            "detail": "low",
+        })
+
+    response = OpenAI().responses.create(
+        model=model,
+        input=[{"role": "user", "content": content}],
+        max_output_tokens=200,
+    )
+    raw = response.output_text.strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("AI 응답을 JSON으로 해석할 수 없습니다") from error
+
+    valid_indexes = {item["index"] for item in frames}
+    best_index = parsed.get("best_index")
+    if best_index not in valid_indexes:
+        raise RuntimeError("AI가 존재하지 않는 프레임을 선택했습니다")
+    suggestions = [str(value).strip() for value in parsed.get("suggestions", []) if str(value).strip()]
+    return {
+        "best_index": best_index,
+        "suggestions": suggestions[:3],
+        "model": model,
+        "usage": getattr(response, "usage", None),
+    }
