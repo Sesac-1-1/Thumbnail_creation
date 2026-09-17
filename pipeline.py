@@ -3,13 +3,11 @@
 업로드 저장 → 메타데이터 → 샘플 수 결정 → [측정] 프레임 추출 + 썸네일 저장 순서로
 services/ 모듈을 호출한다. 화면은 views/ 아래 페이지가 담당한다.
 """
-from io import BytesIO
 from pathlib import Path
 import shutil
 import sys
 from typing import Any, BinaryIO
 from uuid import uuid4
-import zipfile
 
 from services import file_manager
 from services.resource_service import (
@@ -136,13 +134,3 @@ def run_pipeline(
         "options": {"size": size, "crop": crop, "image_format": image_format,
                     "manual_sample_count": manual_sample_count},
     }
-
-
-def zip_thumbnails(thumbnails: list[dict[str, Any]]) -> bytes:
-    """썸네일 파일들을 zip 바이트로 묶는다 (다운로드용)."""
-    buffer = BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-        for item in thumbnails:
-            path = Path(item["path"])
-            archive.write(path, arcname=f"frame_{item['index']:06d}{path.suffix}")
-    return buffer.getvalue()

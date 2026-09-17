@@ -67,8 +67,6 @@ def render_thumbnails(result: dict[str, Any]) -> None:
     for position, item in enumerate(thumbnails):
         columns[position % GRID_COLUMNS].image(
             str(item["path"]), caption=f"프레임 {item['index']} · {item['timestamp_seconds']:.2f}초")
-    st.download_button("썸네일 전체 다운로드 (zip)", data=pipeline.zip_thumbnails(thumbnails),
-                       file_name="thumbnails.zip", mime="application/zip")
 
     if st.button("AI로 추천 프레임·문구 분석"):
         try:
